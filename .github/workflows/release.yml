@@ -1,0 +1,112 @@
+# A version tag (vX.Y.Z, made by `make release-all` and pushed) builds the installers with
+# the same scripts as `make dist` and publishes them as a GitHub release, with the section
+# of that version from the changelog as its description.
+name: Release
+
+on:
+  push:
+    tags: ['v[0-9]+.[0-9]+.[0-9]+']
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  # The scripts build right here instead of starting a container of their own.
+  GE_IN_CONTAINER: "1"
+
+defaults:
+  run:
+    working-directory: app
+
+jobs:
+  rpm:
+    name: RPM for RHEL ${{ matrix.rhel }}
+    runs-on: ubuntu-latest
+    container: registry.access.redhat.com/ubi${{ matrix.rhel }}/ubi
+    strategy:
+      matrix:
+        rhel: [9, 10]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Tools
+        run: |
+          dnf install -y -q gcc rpm-build findutils
+          curl -sSf https://sh.rustup.rs | sh -s -- -y -q --profile minimal --default-toolchain stable
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+      - name: Build the package
+        run: sh packaging/build-rpm.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rpm-el${{ matrix.rhel }}
+          path: app/dist/*.rpm
+          if-no-files-found: error
+
+  # Compiled on RHEL 8 so the one file also starts on older systems.
+  appimage:
+    name: AppImage
+    runs-on: ubuntu-latest
+    container: registry.access.redhat.com/ubi8/ubi
+    steps:
+      - uses: actions/checkout@v4
+      - name: Tools
+        run: |
+          dnf install -y -q gcc findutils file
+          curl -sSf https://sh.rustup.rs | sh -s -- -y -q --profile minimal --default-toolchain stable
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+      - name: Build the AppImage
+        run: sh packaging/build-appimage.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: appimage
+          path: app/dist/*.AppImage
+          if-no-files-found: error
+
+  windows:
+    name: Windows MSI and zip
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends gcc-mingw-w64-x86-64 msitools wixl zip
+          rustup toolchain install stable --profile minimal && rustup default stable
+          rustup target add x86_64-pc-windows-gnu
+      - name: Build the installer and the zip
+        run: sh packaging/build-windows.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: |
+            app/dist/*.msi
+            app/dist/*.zip
+          if-no-files-found: error
+
+  publish:
+    name: Publish the release
+    runs-on: ubuntu-latest
+    needs: [rpm, appimage, windows]
+    permissions:
+      contents: write
+    defaults:
+      run:
+        working-directory: .
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Checksums and notes
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          ( cd dist && sha256sum * > SHA256SUMS.txt && cat SHA256SUMS.txt )
+          # The section of this version from the English changelog.
+          awk -v v="$version" '$1 == "##" { on = ($2 == v) ; next } on' app/CHANGELOG.en.md > notes.md
+          [ -s notes.md ] || echo "See app/CHANGELOG.en.md." > notes.md
+          cat notes.md
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" dist/* --title "RefBraid ${GITHUB_REF_NAME#v}" --notes-file notes.md --verify-tag

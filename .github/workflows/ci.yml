@@ -1,0 +1,161 @@
+# Build and test on every push to main and on every pull request.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+defaults:
+  run:
+    working-directory: app
+
+jobs:
+  linux:
+    name: Linux — build and test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            app/target
+          key: linux-${{ hashFiles('app/Cargo.lock') }}
+          restore-keys: linux-
+      - name: Toolchain
+        run: rustup toolchain install stable --profile minimal && rustup default stable
+      - name: Build
+        run: cargo build --locked
+      # The tests make real repositories: they need an author, and line endings left alone.
+      - name: Git settings for the tests
+        run: |
+          git config --global user.name "CI"
+          git config --global user.email "ci@example.com"
+          git config --global core.autocrlf false
+          git config --global init.defaultBranch main
+      - name: Test
+        run: cargo test --locked
+
+  windows:
+    name: Windows — build and test
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            app/target
+          key: windows-${{ hashFiles('app/Cargo.lock') }}
+          restore-keys: windows-
+      - name: Toolchain
+        run: rustup toolchain install stable --profile minimal && rustup default stable
+      - name: Build
+        run: cargo build --locked
+      # The tests make real repositories: they need an author, and line endings left alone.
+      - name: Git settings for the tests
+        run: |
+          git config --global user.name "CI"
+          git config --global user.email "ci@example.com"
+          git config --global core.autocrlf false
+          git config --global init.defaultBranch main
+      - name: Test
+        run: cargo test --locked
+
+  # The same way the released Windows program is built: cross-compiled with MinGW.
+  windows-cross:
+    name: Windows — release toolchain (MinGW)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            app/target
+          key: mingw-${{ hashFiles('app/Cargo.lock') }}
+          restore-keys: mingw-
+      - name: Toolchain
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends gcc-mingw-w64-x86-64
+          rustup toolchain install stable --profile minimal && rustup default stable
+          rustup target add x86_64-pc-windows-gnu
+      - name: Build
+        run: cargo build --locked --target x86_64-pc-windows-gnu
+
+  # The agreed rules: what clippy calls an error or suspicious fails the job; advice on
+  # performance is shown; style and complexity are not checked. The job does not block a
+  # merge until its first report has been gone through.
+  clippy:
+    name: Clippy
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            app/target
+          key: clippy-${{ hashFiles('app/Cargo.lock') }}
+          restore-keys: clippy-
+      - name: Toolchain
+        run: rustup toolchain install stable --profile minimal --component clippy && rustup default stable
+      - name: Clippy
+        run: cargo clippy --locked --all-targets -- -D clippy::correctness -D clippy::suspicious -W clippy::perf -A clippy::style -A clippy::complexity
+
+  # Pictures of the main screens in both themes, kept with the run for two weeks.
+  screenshots:
+    name: Screenshots
+    runs-on: ubuntu-latest
+    needs: linux
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            app/target
+          key: linux-${{ hashFiles('app/Cargo.lock') }}
+          restore-keys: linux-
+      - name: Tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends xvfb xauth libgl1 libegl1 libxkbcommon-x11-0 fonts-dejavu-core
+          rustup toolchain install stable --profile minimal && rustup default stable
+      - name: Build
+        run: cargo build --locked
+      - name: Take the pictures
+        run: |
+          git config --global user.name "CI" && git config --global user.email "ci@example.com"
+          mkdir -p shots
+          for view in selected commit diff settings keysetup findaction twintabs halving; do
+            for theme in dark light; do
+              REFBRAID_THEME=$theme REFBRAID_VIEW=$view xvfb-run -a ./target/debug/refbraid --screenshot "shots/$view-$theme.png" || echo "no picture for $view ($theme)"
+            done
+          done
+          ls -l shots
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: screenshots
+          path: app/shots
+          retention-days: 14

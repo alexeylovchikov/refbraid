@@ -22,7 +22,7 @@ cargo test graph::    # tests of one module; cargo test <test_name> for a single
 make release          # cargo build --release
 ```
 
-Tests of git operations use `testrepo.rs` (`TestRepo::new("tag")`: a throw-away repository with its own author, `git`, `write`, `commit`, `run` for a job's commands, `app`; it removes itself) — use it for new tests instead of building a repository by hand. CI is `.gitlab-ci.yml` in the repository root: build and test on every push, installers on a `vX.Y.Z` tag through the same `packaging/build-*.sh` scripts (`GE_IN_CONTAINER=1` makes them build where they are instead of starting a container).
+Tests of git operations use `testrepo.rs` (`TestRepo::new("tag")`: a throw-away repository with its own author, `git`, `write`, `commit`, `run` for a job's commands, `app`; it removes itself) — use it for new tests instead of building a repository by hand. CI is GitHub Actions (`.github/workflows/`): `ci.yml` builds and tests on Linux and Windows on every push and pull request; `release.yml` runs on a `vX.Y.Z` tag, builds the installers through the same `packaging/build-*.sh` scripts (`GE_IN_CONTAINER=1` makes them build where they are instead of starting a container) and publishes them as a GitHub release with the changelog section of that version.
 
 There is no lint/format configuration; the code is not rustfmt-default (long lines), so don't reformat files wholesale.
 
@@ -35,7 +35,7 @@ make rpm-el9 rpm-el8 windows appimage   # built in podman/docker containers
 make dist             # rpm-el10 + rpm-el9 + windows + appimage, into app/dist/
 ```
 
-`make release-all` (`packaging/release.sh`, `BUMP=minor|major|x.y.z` for other than patch) requires a clean `app/`, raises the version, runs `claude -p` with the `changelog` skill (`.claude/skills/changelog/SKILL.md`) to add the new version's section to `app/CHANGELOG.md`, commits `[chore] Выпущена версия X…`, tags `vX`, then runs `make dist`; on failure before the commit it puts the version files back. `make changelog` runs only the changelog step.
+`make release-all` (`packaging/release.sh`, `BUMP=minor|major|x.y.z` for other than patch) requires a clean `app/`, raises the version, runs `claude -p` with the `changelog` skill (`.claude/skills/changelog/SKILL.md`) to add the new version's section to `app/CHANGELOG.md`, commits `[chore] Release version X…`, tags `vX`, then runs `make dist`; on failure before the commit it puts the version files back. `make changelog` runs only the changelog step.
 
 `app/CHANGELOG.md` is built into the binary (`include_str!` in `changelog.rs`, shown by Help → Changelog) and a test requires its first section to be the current `Cargo.toml` version — so a version bump without a changelog section fails `cargo test`. The window renders only the Markdown subset the skill describes; the `<!-- last-commit: … -->` marker records the last commit already covered.
 
@@ -77,4 +77,4 @@ Single binary crate, flat `app/src/` module list, no workspace.
 
 ## Commit messages
 
-History uses `[prefix] Description.` in Russian, one sentence ending with a period, no colon or dash after the prefix — e.g. `[feat] Добавлено окно Git Config …`, `[chore] …`.
+History uses `[prefix] Description.` in English: one sentence in the imperative mood, starting with a capital letter and ending with a period, no colon or dash after the prefix — e.g. `[feat] Add the Git Config window.`, `[fix] Open folders in Explorer by a path with backslashes.`, `[chore] …`. The prefixes are `[feat]`, `[fix]`, `[docs]`, `[chore]`, `[refactor]`, `[test]`, `[ci]`.

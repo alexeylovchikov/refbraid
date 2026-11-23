@@ -52,7 +52,8 @@ new=$(version)
 write_changelog "$new"
 
 git add -- $files
-git commit -q -m "[chore] Выпущена версия $new, обновлён лог изменений."
+git commit -q -m "[chore] Release version $new and update the changelog."
 trap - EXIT
 git tag -a "v$new" -m "RefBraid $new"
 echo "Committed and tagged v$new. Push with: git push && git push origin v$new"
+echo "The pushed tag starts the Release workflow on GitHub: it builds the installers and publishes them."

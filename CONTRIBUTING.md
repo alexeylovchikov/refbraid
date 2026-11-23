@@ -41,7 +41,8 @@ cargo run -- --screenshot out.png     # a picture of the window without a displa
 - Colours come from `app/src/theme.rs` and must work in both themes.
 - Git is run through `git::run` / jobs, not through a library.
 - Tests of git operations use `TestRepo` (`app/src/testrepo.rs`).
-- Commit messages: `[feat] …`, `[fix] …`, `[docs] …`, `[chore] …` — one sentence.
+- Commit messages are in English: `[feat] …`, `[fix] …`, `[docs] …`, `[chore] …` and one
+  sentence in the imperative mood, e.g. `[fix] Keep the selection when the log is reloaded.`
 
 Don't include personal data, passwords, tokens or internal addresses in code, tests or
 screenshots; use made-up names and `example.com`.
