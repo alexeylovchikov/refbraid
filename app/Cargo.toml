@@ -1,0 +1,43 @@
+[package]
+name = "refbraid"
+version = "0.4.3"
+edition = "2024"
+description = "Git history, branches and commits in one window"
+authors = ["Alexey Lovchikov"]
+readme = "../README.md"
+license = "MIT"
+
+[dependencies]
+chrono = { version = "0.4.45", default-features = false, features = ["clock", "std"] }
+eframe = { version = "0.37.0", default-features = false, features = ["default_fonts", "glow", "wayland", "x11", "clipboard", "links"] }
+image = { version = "0.25.10", default-features = false, features = ["png", "jpeg", "gif", "bmp", "ico", "tiff", "webp", "tga", "pnm", "qoi", "hdr", "dds", "exr", "ff"] }
+# Draws SVG pictures for the image viewer.
+resvg = "0.45"
+regex = { version = "1.13.1", default-features = false, features = ["std", "unicode"] }
+rfd = "0.18.0"
+
+# Windows: also draw with Direct3D 12, which works over Remote Desktop and in VMs.
+[target.'cfg(windows)'.dependencies]
+eframe = { version = "0.37.0", default-features = false, features = ["wgpu", "default_fonts", "glow", "clipboard", "links"] }
+
+# Linux: open the window through X11 so the desktop draws its own title bar
+# (minimise / maximise / close look like every other app).
+[target.'cfg(target_os = "linux")'.dependencies]
+winit = { version = "0.30.13", default-features = false, features = ["x11", "rwh_06"] }
+
+# Puts the icon and version details into the Windows .exe (only used when building for Windows).
+[build-dependencies]
+embed-resource = "3"
+
+[profile.release]
+opt-level = 3
+strip = true
+lto = "thin"
+codegen-units = 4
+
+# Keep everyday builds fast to run: optimise the libraries even in debug builds.
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3

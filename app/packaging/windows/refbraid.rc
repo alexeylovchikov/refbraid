@@ -1,0 +1,26 @@
+1 ICON "refbraid.ico"
+
+1 VERSIONINFO
+FILEVERSION 0,4,3,0
+PRODUCTVERSION 0,4,3,0
+FILEOS 0x40004
+FILETYPE 0x1
+BEGIN
+  BLOCK "StringFileInfo"
+  BEGIN
+    BLOCK "040904B0"
+    BEGIN
+      VALUE "CompanyName", "RefBraid"
+      VALUE "FileDescription", "RefBraid"
+      VALUE "FileVersion", "0.4.3"
+      VALUE "InternalName", "refbraid"
+      VALUE "OriginalFilename", "refbraid.exe"
+      VALUE "ProductName", "RefBraid"
+      VALUE "ProductVersion", "0.4.3"
+    END
+  END
+  BLOCK "VarFileInfo"
+  BEGIN
+    VALUE "Translation", 0x409, 1200
+  END
+END

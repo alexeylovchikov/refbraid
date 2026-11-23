@@ -1,0 +1,61 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Windows 64-bit installer (MSI) for RefBraid, built with wixl (msitools) by
+     packaging/build-windows.sh. Installs for all users into Program Files, so it needs
+     administrator rights; a newer version replaces the installed one.
+     Silent install: msiexec /i refbraid-<version>-windows-x64.msi /qn
+     Without the folder menu or the desktop shortcut: ADDLOCAL=Main (or Main,ExplorerMenu). -->
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
+  <!-- VERSION and EXE are given on the command line (wixl -D). -->
+  <!-- UpgradeCode must never change: it is how Windows knows a newer version of the same program. -->
+  <Product Id="*" Name="RefBraid" Language="1033" Version="$(var.VERSION)" Manufacturer="RefBraid" UpgradeCode="EFCE29ED-CE71-4498-AC8A-12D4619F663B">
+    <Package InstallerVersion="200" Compressed="yes" InstallScope="perMachine" Description="RefBraid $(var.VERSION)" Comments="A desktop Git client. Needs Git for Windows (git-scm.com)."/>
+    <MajorUpgrade DowngradeErrorMessage="A newer version of RefBraid is already installed."/>
+    <Media Id="1" Cabinet="app.cab" EmbedCab="yes"/>
+
+    <Icon Id="AppIcon" SourceFile="refbraid.ico"/>
+    <Property Id="ARPPRODUCTICON" Value="AppIcon"/>
+    <Property Id="ARPNOMODIFY" Value="1"/>
+
+    <Directory Id="TARGETDIR" Name="SourceDir">
+      <Directory Id="ProgramFiles64Folder">
+        <Directory Id="INSTALLDIR" Name="RefBraid">
+          <Component Id="MainExe" Guid="834D3E4C-C977-40C9-BD2A-385214879278" Win64="yes">
+            <File Id="RefBraidExe" Name="refbraid.exe" Source="$(var.EXE)" KeyPath="yes">
+              <Shortcut Id="StartMenuShortcut" Directory="ProgramMenuFolder" Name="RefBraid" WorkingDirectory="INSTALLDIR" Icon="AppIcon" Advertise="yes"/>
+            </File>
+          </Component>
+          <Component Id="Licences" Guid="80C1C06D-4FD5-40F4-8FF1-96E0A13C41A9" Win64="yes">
+            <File Id="LicenceTxt" Name="LICENSE.txt" Source="LICENSE.txt" KeyPath="yes"/>
+            <File Id="NoticesMd" Name="THIRD-PARTY-NOTICES.md" Source="THIRD-PARTY-NOTICES.md"/>
+          </Component>
+          <!-- "Open in RefBraid" in the right-click menu of a folder and of a folder's background. -->
+          <Component Id="FolderMenu" Guid="E544E392-34E8-4F8B-AD0E-01DCB98D9967" Win64="yes">
+            <RegistryValue Root="HKLM" Key="Software\Classes\Directory\shell\RefBraid" Type="string" Value="Open in RefBraid" KeyPath="yes"/>
+            <RegistryValue Root="HKLM" Key="Software\Classes\Directory\shell\RefBraid" Name="Icon" Type="string" Value="[INSTALLDIR]refbraid.exe"/>
+            <RegistryValue Root="HKLM" Key="Software\Classes\Directory\shell\RefBraid\command" Type="string" Value="&quot;[INSTALLDIR]refbraid.exe&quot; &quot;%1&quot;"/>
+            <RegistryValue Root="HKLM" Key="Software\Classes\Directory\Background\shell\RefBraid" Type="string" Value="Open in RefBraid"/>
+            <RegistryValue Root="HKLM" Key="Software\Classes\Directory\Background\shell\RefBraid" Name="Icon" Type="string" Value="[INSTALLDIR]refbraid.exe"/>
+            <RegistryValue Root="HKLM" Key="Software\Classes\Directory\Background\shell\RefBraid\command" Type="string" Value="&quot;[INSTALLDIR]refbraid.exe&quot; &quot;%V&quot;"/>
+          </Component>
+          <Component Id="DesktopLink" Guid="192953F3-1FC6-46F2-A195-C8A8C038C2A4" Win64="yes">
+            <RegistryValue Root="HKLM" Key="Software\RefBraid" Name="DesktopShortcut" Type="integer" Value="1" KeyPath="yes"/>
+            <Shortcut Id="DesktopShortcut" Directory="DesktopFolder" Name="RefBraid" Target="[INSTALLDIR]refbraid.exe" WorkingDirectory="INSTALLDIR" Icon="AppIcon"/>
+          </Component>
+        </Directory>
+      </Directory>
+      <Directory Id="ProgramMenuFolder"/>
+      <Directory Id="DesktopFolder"/>
+    </Directory>
+
+    <Feature Id="Main" Title="RefBraid" Level="1" Absent="disallow">
+      <ComponentRef Id="MainExe"/>
+      <ComponentRef Id="Licences"/>
+    </Feature>
+    <Feature Id="ExplorerMenu" Title="Open in RefBraid (folder right-click menu)" Level="1">
+      <ComponentRef Id="FolderMenu"/>
+    </Feature>
+    <Feature Id="DesktopShortcut" Title="Desktop shortcut" Level="1">
+      <ComponentRef Id="DesktopLink"/>
+    </Feature>
+  </Product>
+</Wix>

@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=RefBraid
+GenericName=Git Client
+Comment=Browse history, branches and commit changes of a Git repository
+Exec=/usr/bin/refbraid %f
+Icon=refbraid
+Terminal=false
+Categories=Development;RevisionControl;
+MimeType=inode/directory;
+StartupWMClass=refbraid
+Keywords=git;branch;commit;log;history;

@@ -1,0 +1,8 @@
+# Build environment for the RHEL package. By default RHEL 8 (UBI) so the program also runs on
+# RHEL 9 and 10; build with --build-arg BASE=registry.access.redhat.com/ubi9/ubi for an .el9 package.
+ARG BASE=registry.access.redhat.com/ubi8/ubi
+FROM $BASE
+RUN dnf install -y gcc rpm-build findutils \
+ && dnf clean all \
+ && curl -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain stable
+ENV PATH=/root/.cargo/bin:$PATH

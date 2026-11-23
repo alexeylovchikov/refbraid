@@ -1,0 +1,25 @@
+# --- Rust / Cargo (app/) ---
+# Build output, including the per-distro cargo registries and tools
+# that the packaging scripts put under target/.
+target/
+**/*.rs.bk
+*.pdb
+
+# Installers produced by `make dist` (rpm, AppImage, Windows setup/zip)
+/app/dist/
+
+# Working screenshots taken while building the UI
+/app/shots/
+
+# --- Editors / OS ---
+.idea/
+.vscode/
+*.iml
+*.swp
+*~
+.DS_Store
+Thumbs.db
+
+# --- Local secrets / env ---
+.env
+.env.*
