@@ -3908,6 +3908,8 @@ mod checkout_tests {
             let msg = if i == 3 { "commit 3\n\nthe needle is in the body".to_string() } else { format!("commit {i}") };
             g(&["commit", "-qm", &msg]);
         }
+        // The folder as git names it: what the program has for an open repository.
+        let dir = git::find_repo_root(&git::plain_path(dir.canonicalize().unwrap())).unwrap();
         let mut repo = Repo::new(dir, "t".into(), &Settings::default());
         repo.state = git::load_state(&repo.path);
         repo
@@ -4066,7 +4068,7 @@ mod checkout_tests {
     fn repositories_open_as_tabs_and_keep_what_was_open_in_them() {
         let (a, b) = (long_repo("tab-a", 3).path, long_repo("tab-b", 5).path);
         let mut app = App::new(&egui::Context::default(), Some(a.clone()), Some(a.join("no-screenshot.png")));
-        assert_eq!(app.tab_order, [a.clone()]);
+        assert_eq!(app.tab_order.as_slice(), std::slice::from_ref(&a));
         // Something open in the first one: a selected commit, a job that can be undone, the Console.
         app.select_commit(1);
         let picked = app.repo.as_ref().unwrap().commits[1].hash.clone();

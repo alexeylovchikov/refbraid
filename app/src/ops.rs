@@ -229,7 +229,7 @@ mod tests {
         let fix = r.commit_file("b.txt", "fix\n", "the fix");
         r.git(&["checkout", "-q", &main]);
         // -x records where the commit came from.
-        r.run(&[crate::dialogs::pick_args(false, &[fix.clone()], true, false, None)]);
+        r.run(&[crate::dialogs::pick_args(false, std::slice::from_ref(&fix), true, false, None)]);
         assert!(r.git(&["log", "-1", "--format=%B"]).contains(&format!("(cherry picked from commit {fix})")));
         assert_eq!(r.read("b.txt"), "fix\n");
         // Revert without committing leaves the reversal staged.
@@ -244,19 +244,27 @@ mod tests {
         let r = TestRepo::new("ops-names");
         r.write("docs/отчёт за год.txt", "строка\n");
         r.write("src/with space.rs", "fn a() {}\n");
-        r.write("quote\"d.txt", "q\n");
+        // A quote in a file name: not possible on Windows.
+        let quoted = cfg!(unix);
+        if quoted {
+            r.write("quote\"d.txt", "q\n");
+        }
         r.commit("base");
         r.git(&["mv", "src/with space.rs", "src/renamed file.rs"]);
         r.write("docs/отчёт за год.txt", "строка\nвторая\n");
         r.write("новый файл.md", "# привет\n");
-        std::fs::remove_file(r.dir.join("quote\"d.txt")).unwrap();
+        if quoted {
+            std::fs::remove_file(r.dir.join("quote\"d.txt")).unwrap();
+        }
         let st = git::status(&r.dir);
         let line = |p: &str| st.iter().find(|e| e.path == p).map(|e| (e.x, e.y, e.old_path.clone()));
         assert_eq!(line("docs/отчёт за год.txt"), Some((' ', 'M', None)));
         assert_eq!(line("src/renamed file.rs"), Some(('R', ' ', Some("src/with space.rs".to_string()))));
         assert_eq!(line("новый файл.md"), Some(('?', '?', None)));
-        assert_eq!(line("quote\"d.txt"), Some((' ', 'D', None)));
-        assert_eq!(st.len(), 4);
+        if quoted {
+            assert_eq!(line("quote\"d.txt"), Some((' ', 'D', None)));
+        }
+        assert_eq!(st.len(), if quoted { 4 } else { 3 });
         // The diff of a file with such a name, and of the renamed one.
         let e = st.iter().find(|e| e.path == "docs/отчёт за год.txt").unwrap();
         let d = git::worktree_diff(&r.dir, e, true);
@@ -268,9 +276,9 @@ mod tests {
         let det = git::commit_details(&r.dir, "HEAD").unwrap();
         let mut names: Vec<(char, String, Option<String>)> = det.files.iter().map(|f| (f.status, f.path.clone(), f.old_path.clone())).collect();
         names.sort_by(|a, b| a.1.cmp(&b.1));
+        names.retain(|n| n.1 != "quote\"d.txt");
         assert_eq!(names, [
             ('M', "docs/отчёт за год.txt".to_string(), None),
-            ('D', "quote\"d.txt".to_string(), None),
             ('R', "src/renamed file.rs".to_string(), Some("src/with space.rs".to_string())),
             ('A', "новый файл.md".to_string(), None),
         ]);

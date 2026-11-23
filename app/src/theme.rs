@@ -135,8 +135,6 @@ pub fn syntax_color(kind: crate::syntax::Kind) -> Color32 {
     }
 }
 
-/// Text found by the search in a diff, and the match the viewer is at.
-
 pub const GRAPH_COLORS: [Color32; 8] = [
     Color32::from_rgb(0x5f, 0xb8, 0x46),
     Color32::from_rgb(0x8e, 0x5f, 0xe0),

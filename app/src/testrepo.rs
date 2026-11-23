@@ -16,9 +16,13 @@ impl TestRepo {
     /// An empty repository `<temp>/ge-<tag>-<pid>-<n>` with a name and an e-mail of its own, so
     /// commits work whatever the machine's own git settings are.
     pub fn new(tag: &str) -> TestRepo {
-        let r = TestRepo::folder(tag);
+        let mut r = TestRepo::folder(tag);
         r.git(&["init", "-q"]);
         r.identity();
+        // The folder as git names it: what the program has for an open repository.
+        if let Some(root) = git::find_repo_root(&r.dir) {
+            r.dir = root;
+        }
         r
     }
 

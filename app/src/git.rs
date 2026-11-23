@@ -732,7 +732,7 @@ pub fn file_names(dir: &Path, rev: &str, path: &str, limit: usize) -> std::colle
         .filter_map(|rec| {
             let mut parts = rec.split('\0').filter(|t| !t.trim().is_empty());
             let hash = parts.next()?.trim().to_string();
-            let name = parts.last()?.to_string();
+            let name = parts.next_back()?.to_string();
             Some((hash, name))
         })
         .collect()
@@ -1544,7 +1544,7 @@ mod tests {
         assert_eq!(stash_push_args("", false, true, &[]), ["stash", "push", "--keep-index"]);
 
         let list = stashes(&dir);
-        assert_eq!(list.iter().map(|s| s.message.as_str()).collect::<Vec<_>>(), ["On master: rest", "On master: part"].map(|m| m.replace("master", &run(&dir, &["rev-parse", "--abbrev-ref", "HEAD"]).stdout.trim().to_string())));
+        assert_eq!(list.iter().map(|s| s.message.as_str()).collect::<Vec<_>>(), ["On master: rest", "On master: part"].map(|m| m.replace("master", &run(&dir, &["rev-parse", "--abbrev-ref", "HEAD"]).stdout.trim())));
         assert!(list.iter().all(|s| s.hash.len() == 40));
         let names = |s: &Stash| stash_files(&dir, &s.hash).iter().map(|f| format!("{}{} {}", f.file.status, if f.untracked { "?" } else { "" }, f.file.path)).collect::<Vec<_>>();
         assert_eq!(names(&list[0]), ["D gone.txt", "M src/b.txt"]);

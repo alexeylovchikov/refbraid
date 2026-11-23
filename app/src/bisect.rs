@@ -116,6 +116,11 @@ pub fn load(dir: &Path) -> Option<Bisect> {
         let mut args = vec!["rev-list", "--count", bad.as_str(), "--not"];
         args.extend(b.good.iter().map(|g| g.as_str()));
         b.left = git::run(dir, &args).stdout.trim().parse().unwrap_or(0);
+        // One commit left between the good ones and the bad one: that is the first bad commit.
+        // (Git also writes it to its bisect log, but not every version does it the same way.)
+        if b.found.is_none() && b.left == 1 && b.skipped.is_empty() {
+            b.found = Some(bad.clone());
+        }
     }
     Some(b)
 }
