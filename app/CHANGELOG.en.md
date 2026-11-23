@@ -1,6 +1,6 @@
 # Changelog
 
-<!-- last-commit: ee2e9ee3dab08b3d3f513b04500674a2a29213d3 -->
+<!-- last-commit: 7a48462c9d0aa1422d613c6753f9ed7da00b2731 -->
 
 ## 0.4.3 — 2026-11-23
 
