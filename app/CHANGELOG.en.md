@@ -1,6 +1,20 @@
 # Changelog
 
-<!-- last-commit: 7a48462c9d0aa1422d613c6753f9ed7da00b2731 -->
+<!-- last-commit: 9519d20ed37cdcfcf328bca9dd2aaa7e628db0bf -->
+
+## 0.4.4 — 2026-11-24
+
+### New
+- **Submodules**: when a repository has submodules, the branch tree gets a **Submodules** section — the path of each, the recorded commit (or "recorded → checked out") and the marks "not initialised", "conflict", "has changes". A double click opens a submodule in a tab of its own; its menu has **Open**, **Init**, **Update**, **Update with Nested Submodules**, **Sync Address**, **Update All Submodules** and copying of the path and the address.
+- Git → **Update Submodules** updates all submodules at once, and after a pull, checkout or merge that changed the recorded commit the program offers to update them.
+- In Changes a submodule is marked "submodule" with its state, and its diff shows "old commit → new commit" and the list of commits between them — the new ones and the ones left behind. It is shown the same way in the files of a commit and when comparing revisions.
+- **Git LFS**: the diff of a file kept in LFS shows its real content in place of the pointer — text as text, a picture in the image view. When the file is not downloaded or is too big, the diff says what happened and what to do.
+- Files kept in LFS are marked "LFS" in Changes and in the list of files of a commit.
+- The Git → **LFS** menu: **Pull**, **Fetch**, **Fetch All** and the **Tracked Patterns…** window with the list of file patterns kept in LFS, where they can be added and removed. The file menu in Changes has **Track with LFS**. When git-lfs is not installed, the program explains how to install it.
+- A first build for **macOS**: a universal `.dmg` for Intel and Apple Silicon (not yet tried on a real Mac). The program finds git, git-lfs and AI agents installed with Homebrew or MacPorts, and uses the system fonts of macOS. File manager integration is not available on macOS yet — open a folder with File → Open.
+
+### Fixed
+- Bisect finds the first bad commit with any version of git: with some versions the result was not shown.
 
 ## 0.4.3 — 2026-11-23
 

@@ -1,6 +1,6 @@
 [package]
 name = "refbraid"
-version = "0.4.3"
+version = "0.4.4"
 edition = "2024"
 description = "Git history, branches and commits in one window"
 authors = ["Alexey Lovchikov"]
