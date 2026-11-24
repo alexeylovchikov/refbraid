@@ -8,6 +8,7 @@
 #   make build / run / test   debug build, start it, run the tests
 #   make release              optimised build for this computer
 #   make rpm-el10 rpm-el9 rpm-el8 deb windows appimage
+#   make macos                the macOS application (.dmg) — on a Mac only, not part of dist
 #   make dist                 RHEL 10 + RHEL 9 + Debian/Ubuntu + Windows 64 + AppImage
 #   make release-all          new patch version, changelog (Claude Code), commit, tag, then dist
 #                             (BUMP=minor|major|x.y.z for another version)
@@ -19,7 +20,7 @@ CARGO ?= $(shell command -v cargo 2>/dev/null || echo $(HOME)/.cargo/bin/cargo)
 
 .DEFAULT_GOAL := help
 .PHONY: help version bump-patch bump-minor bump-major set-version bump-release \
-	build run test release changelog rpm-el10 rpm-el9 rpm-el8 deb windows appimage notices dist release-all list clean
+	build run test release changelog rpm-el10 rpm-el9 rpm-el8 deb windows appimage macos notices dist release-all list clean
 
 help:
 	@echo "RefBraid $(VERSION) (RPM release $(RPM_RELEASE))"
@@ -43,6 +44,7 @@ help:
 	@echo "  make windows               Windows 64-bit MSI installer and portable zip (container)"
 	@echo "  make notices               THIRD-PARTY-NOTICES.md from the dependencies' own licence files"
 	@echo "  make appimage              AppImage for most Linux systems (container)"
+	@echo "  make macos                 macOS application in a .dmg, Apple silicon + Intel (on a Mac only)"
 	@echo "  make dist                  rpm-el10 + rpm-el9 + deb + windows + appimage"
 	@echo "  make release-all           version +1, changelog, commit, tag v<version>, then dist"
 	@echo "                            (make release-all BUMP=minor | major | x.y.z)"
@@ -101,6 +103,10 @@ notices:
 
 appimage:
 	sh packaging/build-appimage.sh
+
+# Not part of dist: it needs a Mac. The release workflow builds it on a macOS runner.
+macos:
+	sh packaging/build-macos.sh
 
 dist: rpm-el10 rpm-el9 deb windows appimage
 	@$(MAKE) --no-print-directory list

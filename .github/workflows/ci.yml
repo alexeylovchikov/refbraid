@@ -5,6 +5,8 @@ on:
   push:
     branches: [main]
   pull_request:
+  # By hand (Actions → CI → Run workflow): the same jobs plus the tests on macOS.
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -64,6 +66,33 @@ jobs:
           cache-on-failure: true
       # Only the test build: the program on its own is built by the MinGW and Screenshots
       # jobs, and building both here compiles the whole crate twice.
+      - name: Build
+        run: cargo test --locked --no-run
+      # The tests make real repositories: they need an author, and line endings left alone.
+      - name: Git settings for the tests
+        run: |
+          git config --global user.name "CI"
+          git config --global user.email "ci@example.com"
+          git config --global core.autocrlf false
+          git config --global init.defaultBranch main
+      - name: Test
+        run: cargo test --locked
+
+  # Only when started by hand: in a private repository a minute of a macOS runner is charged
+  # as ten minutes of a Linux one. Once the repository is public, the `if` can go.
+  macos:
+    name: macOS — build and test
+    runs-on: macos-latest
+    if: github.event_name == 'workflow_dispatch'
+    steps:
+      - uses: actions/checkout@v4
+      - name: Toolchain
+        run: rustup toolchain install stable --profile minimal && rustup default stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          workspaces: app
+          shared-key: macos
+          cache-on-failure: true
       - name: Build
         run: cargo test --locked --no-run
       # The tests make real repositories: they need an author, and line endings left alone.

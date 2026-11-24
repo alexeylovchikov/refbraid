@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-RefBraid: a standalone desktop Git client (Log with branch tree and commit graph, commit panel, diffs, push/pull, merge-conflict resolution, AI commit messages) inspired by the Git tool window of JetBrains IDEs. Rust + eframe/egui, targets Linux (RPM, deb, AppImage) and Windows.
+RefBraid: a standalone desktop Git client (Log with branch tree and commit graph, commit panel, diffs, push/pull, merge-conflict resolution, AI commit messages) inspired by the Git tool window of JetBrains IDEs. Rust + eframe/egui, targets Linux (RPM, deb, AppImage), Windows and macOS (`.dmg`, built in CI only and not yet tried on a real Mac).
 
 All program code lives in `app/`. The repository root holds the licence (`LICENSE`, `THIRD-PARTY-NOTICES.md`), `README.md` and the CI pipeline.
 
@@ -22,7 +22,7 @@ cargo test graph::    # tests of one module; cargo test <test_name> for a single
 make release          # cargo build --release
 ```
 
-Tests of git operations use `testrepo.rs` (`TestRepo::new("tag")`: a throw-away repository with its own author, `git`, `write`, `commit`, `run` for a job's commands, `app`; it removes itself) — use it for new tests instead of building a repository by hand. CI is GitHub Actions (`.github/workflows/`): `ci.yml` builds and tests on Linux and Windows on every push and pull request; `release.yml` runs on a `vX.Y.Z` tag, builds the installers through the same `packaging/build-*.sh` scripts (`GE_IN_CONTAINER=1` makes them build where they are instead of starting a container) and publishes them as a GitHub release with the changelog section of that version.
+Tests of git operations use `testrepo.rs` (`TestRepo::new("tag")`: a throw-away repository with its own author, `git`, `write`, `commit`, `run` for a job's commands, `app`; it removes itself) — use it for new tests instead of building a repository by hand. CI is GitHub Actions (`.github/workflows/`): `ci.yml` builds and tests on Linux and Windows on every push and pull request (and on macOS when started by hand); `release.yml` runs on a `vX.Y.Z` tag, builds the installers through the same `packaging/build-*.sh` scripts (`GE_IN_CONTAINER=1` makes them build where they are instead of starting a container) and publishes them as a GitHub release with the changelog section of that version.
 
 There is no lint/format configuration; the code is not rustfmt-default (long lines), so don't reformat files wholesale.
 
@@ -33,6 +33,7 @@ make bump-patch | bump-minor | bump-major | set-version V=x.y.z | bump-release
 make rpm-el10         # RPM built on this machine
 make rpm-el9 rpm-el8 deb windows appimage   # built in podman/docker containers
 make dist             # rpm-el10 + rpm-el9 + deb + windows + appimage, into app/dist/
+make macos            # the macOS .dmg — on a Mac only, not part of dist (CI builds it on a macOS runner)
 ```
 
 `make release-all` (`packaging/release.sh`, `BUMP=minor|major|x.y.z` for other than patch) requires a clean `app/`, raises the version, runs `claude -p` with the `changelog` skill (`.claude/skills/changelog/SKILL.md`) to add the new version's section to `app/CHANGELOG.md`, commits `[chore] Release version X…`, tags `vX`, then runs `make dist`; on failure before the commit it puts the version files back. `make changelog` runs only the changelog step.
@@ -73,7 +74,7 @@ Single binary crate, flat `app/src/` module list, no workspace.
 
 **AI features** — `ai.rs` runs an installed coding-agent CLI (Claude Code, Codex, Gemini, …; table `HARNESSES`) as a subprocess with a prompt on stdin or as an argument. Used for commit messages, splitting changes into atomic commits (AI Tasks menu) and resolving merge conflicts (by prompt or by a discovered skill).
 
-**Platform specifics** — on Linux the app prefers X11 or draws its own title bar (`builtin_title_bar` setting); on Windows it tries wgpu restricted to DX12 first (Vulkan is left out on purpose: an old Intel Vulkan driver crashed the process at startup; `WGPU_BACKEND` overrides) and falls back to glow, startup errors and panics go to a message box and `<config dir>/error.log`, and `build.rs` embeds the icon/version resource. File-manager integration (Nautilus "Open With" / Explorer folder menu) is in `integrate.rs` and `packaging/`.
+**Platform specifics** — on Linux the app prefers X11 or draws its own title bar (`builtin_title_bar` setting); on Windows it tries wgpu restricted to DX12 first (Vulkan is left out on purpose: an old Intel Vulkan driver crashed the process at startup; `WGPU_BACKEND` overrides) and falls back to glow, startup errors and panics go to a message box and `<config dir>/error.log`, and `build.rs` embeds the icon/version resource; on macOS `main` adds the Homebrew folders to `PATH` (a program started from Finder gets only the system ones), the file-manager integration is switched off (`integrate::SUPPORTED`) and the `.icns` icon is written by `--write-icon` like the other ones. File-manager integration (Nautilus "Open With" / Explorer folder menu) is in `integrate.rs` and `packaging/`.
 
 ## Commit messages
 

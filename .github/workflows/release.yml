@@ -106,10 +106,55 @@ jobs:
             app/dist/*.zip
           if-no-files-found: error
 
+  # One program for Apple silicon and Intel. Signed "ad hoc" only: no Apple certificate.
+  macos:
+    name: macOS application
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Tools
+        run: |
+          uname -m && sw_vers
+          rustup toolchain install stable --profile minimal && rustup default stable
+      - name: Build the application and the .dmg
+        run: sh packaging/build-macos.sh
+      # The only place the result is looked at: both architectures are inside, the signature
+      # holds, the .dmg opens and the program in it starts and draws its window.
+      - name: Check what was built
+        run: |
+          dmg=$(ls dist/*.dmg)
+          hdiutil attach -quiet -nobrowse -readonly -mountpoint /tmp/refbraid-dmg "$dmg"
+          app=/tmp/refbraid-dmg/RefBraid.app
+          ls -la /tmp/refbraid-dmg "$app/Contents" "$app/Contents/Resources"
+          lipo -archs "$app/Contents/MacOS/refbraid" | tee archs.txt
+          grep -q arm64 archs.txt && grep -q x86_64 archs.txt
+          codesign --verify --deep --strict --verbose=2 "$app"
+          plutil -lint "$app/Contents/Info.plist"
+          sips -g pixelWidth "$app/Contents/Resources/RefBraid.icns"
+          "$app/Contents/MacOS/refbraid" --help
+          git config --global user.name "CI" && git config --global user.email "ci@example.com"
+          mkdir -p shots
+          start=$(date +%s)
+          "$app/Contents/MacOS/refbraid" --screenshot shots/macos.png
+          echo "The picture took $(( $(date +%s) - start )) s (20 or more: drawn without a window)."
+          test -s shots/macos.png
+          hdiutil detach -quiet /tmp/refbraid-dmg || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: macos-screenshot
+          path: app/shots
+          retention-days: 14
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos
+          path: app/dist/*.dmg
+          if-no-files-found: error
+
   publish:
     name: Publish the release
     runs-on: ubuntu-latest
-    needs: [rpm, deb, appimage, windows]
+    needs: [rpm, deb, appimage, windows, macos]
     if: github.ref_type == 'tag'
     permissions:
       contents: write
@@ -122,6 +167,9 @@ jobs:
         with:
           path: dist
           merge-multiple: true
+      # The picture from the macOS check is not a file of the release.
+      - name: Keep only the installers
+        run: rm -f dist/*.png && ls -l dist
       - name: Checksums and notes
         run: |
           version="${GITHUB_REF_NAME#v}"

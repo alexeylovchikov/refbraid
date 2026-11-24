@@ -76,6 +76,24 @@ fn main() -> eframe::Result<()> {
         std::process::exit(askpass::run(&prompt));
     }
 
+    // Started from Finder or the Dock a program gets only the system folders in PATH, so git,
+    // git-lfs and the agents installed with Homebrew or MacPorts would not be found.
+    #[cfg(target_os = "macos")]
+    {
+        let path = std::env::var("PATH").unwrap_or_default();
+        let mut dirs: Vec<&str> = path.split(':').filter(|d| !d.is_empty()).collect();
+        let home = std::env::var("HOME").unwrap_or_default();
+        let own = [format!("{home}/.local/bin"), format!("{home}/.cargo/bin")];
+        let extra: Vec<&str> = ["/opt/homebrew/bin", "/usr/local/bin", "/opt/local/bin"].into_iter().chain(own.iter().map(String::as_str)).filter(|d| !dirs.contains(d)).collect();
+        if !extra.is_empty() {
+            // The folders the person's shell would put first come before the system ones.
+            let mut all = extra;
+            all.append(&mut dirs);
+            // Nothing else runs yet: no other thread reads the environment.
+            unsafe { std::env::set_var("PATH", all.join(":")) };
+        }
+    }
+
     // A crash would otherwise vanish without a trace (on Windows there is no console).
     std::panic::set_hook(Box::new(|info| {
         let main = std::thread::current().name() == Some("main");

@@ -138,7 +138,40 @@ fn ico_bitmap(icon: &IconData) -> Vec<u8> {
     out
 }
 
-/// Save the app icon as .png (256 px) or .ico (16-256 px) — used when building the installers.
+/// The icon as macOS shows applications: the picture takes four fifths of the square, with
+/// clear edges around it, like the icons next to it in the Dock.
+fn padded_icon(size: u32) -> Vec<u8> {
+    let inner = (size * 4 / 5).max(1);
+    let pad = (size - inner) / 2;
+    let small = icon_data(inner);
+    let mut out = vec![0u8; (size * size * 4) as usize];
+    for y in 0..inner {
+        let from = (y * inner * 4) as usize;
+        let to = (((y + pad) * size + pad) * 4) as usize;
+        out[to..to + (inner * 4) as usize].copy_from_slice(&small.rgba[from..from + (inner * 4) as usize]);
+    }
+    out
+}
+
+/// The file of a macOS application icon: a list of PNG pictures, each under the name of its
+/// size (`ic11`…`ic14` are the double-density ones).
+fn icns(picture: impl Fn(u32) -> Result<Vec<u8>, String>) -> Result<Vec<u8>, String> {
+    let kinds: [(&[u8; 4], u32); 10] = [(b"icp4", 16), (b"icp5", 32), (b"ic07", 128), (b"ic08", 256), (b"ic09", 512), (b"ic10", 1024), (b"ic11", 32), (b"ic12", 64), (b"ic13", 256), (b"ic14", 512)];
+    let mut body = Vec::new();
+    for (kind, size) in kinds {
+        let png = picture(size)?;
+        body.extend_from_slice(kind);
+        body.extend_from_slice(&(png.len() as u32 + 8).to_be_bytes());
+        body.extend_from_slice(&png);
+    }
+    let mut out = b"icns".to_vec();
+    out.extend_from_slice(&(body.len() as u32 + 8).to_be_bytes());
+    out.extend_from_slice(&body);
+    Ok(out)
+}
+
+/// Save the app icon as .png (256 px), .ico (16-256 px) or .icns (16-1024 px, for macOS) — used
+/// when building the installers.
 pub fn write_icon(path: &std::path::Path) -> Result<(), String> {
     let png = |size: u32| -> Result<Vec<u8>, String> {
         let icon = icon_data(size);
@@ -154,8 +187,14 @@ pub fn write_icon(path: &std::path::Path) -> Result<(), String> {
         .map_err(|e| e.to_string())?;
         Ok(out)
     };
-    let is_ico = path.extension().map(|e| e.eq_ignore_ascii_case("ico")).unwrap_or(false);
-    let data = if is_ico {
+    let is = |ext: &str| path.extension().map(|e| e.eq_ignore_ascii_case(ext)).unwrap_or(false);
+    let data = if is("icns") {
+        icns(|size| {
+            let mut out = Vec::new();
+            image::write_buffer_with_format(&mut std::io::Cursor::new(&mut out), &padded_icon(size), size, size, image::ExtendedColorType::Rgba8, image::ImageFormat::Png).map_err(|e| e.to_string())?;
+            Ok(out)
+        })?
+    } else if is("ico") {
         // Every size Windows asks for at 100-250 % scaling, so it never has to stretch one.
         let sizes = [16u32, 20, 24, 32, 40, 48, 64, 72, 96, 128, 256];
         // The big one is a PNG; the others are plain bitmaps, which every part of Windows reads.
@@ -178,6 +217,9 @@ pub fn write_icon(path: &std::path::Path) -> Result<(), String> {
     };
     std::fs::write(path, data).map_err(|e| e.to_string())
 }
+
+/// Whether this system has a file manager the program can add itself to (not macOS yet).
+pub const SUPPORTED: bool = cfg!(any(windows, target_os = "linux"));
 
 #[cfg(not(windows))]
 fn home() -> Option<PathBuf> {

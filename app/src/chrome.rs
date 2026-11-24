@@ -307,19 +307,21 @@ impl App {
                     self.show_settings = true;
                 }
                 ui.separator();
-                let label = if cfg!(windows) {
-                    if crate::integrate::installed() {
-                        "Update \"Open in RefBraid\" in Explorer"
+                if crate::integrate::SUPPORTED {
+                    let label = if cfg!(windows) {
+                        if crate::integrate::installed() {
+                            "Update \"Open in RefBraid\" in Explorer"
+                        } else {
+                            "Add \"Open in RefBraid\" to Explorer"
+                        }
+                    } else if crate::integrate::installed() {
+                        "Update \"Open With\" in Files (Nautilus)"
                     } else {
-                        "Add \"Open in RefBraid\" to Explorer"
+                        "Add to Files (Nautilus) \"Open With\""
+                    };
+                    if ui.button(label).clicked() {
+                        self.install_integration();
                     }
-                } else if crate::integrate::installed() {
-                    "Update \"Open With\" in Files (Nautilus)"
-                } else {
-                    "Add to Files (Nautilus) \"Open With\""
-                };
-                if ui.button(label).clicked() {
-                    self.install_integration();
                 }
                 ui.separator();
                 if ui.button(tr("Close Repository")).clicked() {
@@ -913,7 +915,7 @@ impl App {
                     self.open(&d);
                 }
             }
-            if !crate::integrate::installed() {
+            if crate::integrate::SUPPORTED && !crate::integrate::installed() {
                 ui.add_space(4.0);
                 if ui
                     .link(if cfg!(windows) {

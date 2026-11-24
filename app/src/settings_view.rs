@@ -1334,6 +1334,10 @@ impl App {
     }
 
     fn page_file_manager(&mut self, ui: &mut Ui) {
+        if !crate::integrate::SUPPORTED {
+            ui.label(RichText::new(tr("Not available on macOS yet: open a folder with File → Open.")).color(theme::TEXT_MID()));
+            return;
+        }
         let (text, button) = if cfg!(windows) {
             (
                 "Adds \"Open in RefBraid\" to the right-click menu of folders in Explorer.",

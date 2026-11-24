@@ -32,3 +32,13 @@ All container builds need podman or docker.
   desktop shortcut add `ADDLOCAL=Main,ExplorerMenu`, without the folder menu too `ADDLOCAL=Main`.
   The `.zip` is the program alone, for use without installing or without administrator rights.
   Git for Windows must be installed.
+- `sh packaging/build-macos.sh` (on a Mac only; `make macos`, not part of `make dist`) builds
+  `dist/refbraid-<version>-macos-universal.dmg`: `RefBraid.app` for Apple silicon and Intel in
+  one file (`lipo`), macOS 11 and newer, with the window to drag it into Applications.
+  `macos/Info.plist` describes the application (the version is put in from `Cargo.toml`), the
+  icon is written by the program itself (`--write-icon RefBraid.icns`).
+  The application is signed "ad hoc": there is no Apple developer certificate and it is not
+  notarised, so macOS refuses the first start of a downloaded copy. To allow it: System
+  Settings → Privacy & Security → Open Anyway, or `xattr -dr com.apple.quarantine /Applications/RefBraid.app`.
+  Without a Mac: Actions → Release → Run workflow builds it on a macOS runner and keeps the
+  `.dmg` with the run. Git comes with the Xcode command line tools (`xcode-select --install`).

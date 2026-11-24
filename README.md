@@ -44,6 +44,9 @@ The full list of changes by version is in [app/CHANGELOG.en.md](app/CHANGELOG.en
   and tested with Git 2.52.0; much older versions lack some of the commands it uses
   (`git restore`, for one, appeared in Git 2.23).
 - Linux (X11 or Wayland) or Windows 10 / 11, 64-bit.
+- macOS 11 or newer (Apple silicon or Intel) — experimental: the application is built and
+  started by CI, but has not been tried on a real Mac yet. It is not notarised, so macOS
+  refuses the first start: allow it in System Settings → Privacy & Security → Open Anyway.
 
 ## Build and run
 
@@ -53,7 +56,8 @@ cargo run                 # or: cargo run -- /path/to/repository
 cargo test
 ```
 
-Installers (RPM, deb, AppImage, Windows MSI and zip) are built with `make dist`; see
+Installers (RPM, deb, AppImage, Windows MSI and zip) are built with `make dist`, the macOS
+`.dmg` with `make macos` on a Mac; see
 [app/packaging/README.md](app/packaging/README.md). `make` with no target lists every command.
 
 ## Origin

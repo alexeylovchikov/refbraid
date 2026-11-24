@@ -521,6 +521,7 @@ pub const PAIRS: &[(&str, &str)] = &[
     ("This command:", "Эта команда:"),
     ("%f - the file, %l - the line. Put quotes around a program path with spaces.", "%f — файл, %l — строка. Путь к программе с пробелами возьмите в кавычки."),
     ("File manager integration", "Интеграция с файловым менеджером"),
+    ("Not available on macOS yet: open a folder with File → Open.", "На macOS пока недоступно: откройте папку через File → Open."),
     ("Accent colour", "Цвет акцента"),
     ("The title bar and the strip of buttons at the left fade from this colour at the top-left corner.", "Заголовок окна и полоса кнопок слева плавно переходят из этого цвета в левом верхнем углу."),
     ("Custom:", "Свой:"),
