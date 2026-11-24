@@ -16,6 +16,10 @@ Before its first public release the program was developed under the working name
 |---|---|---|
 | ![Commit panel in the light theme](docs/commit-light.png) | ![Side-by-side diff](docs/diff.png) | ![Three-column merge window with search](docs/conflicts.png) |
 
+| CI results in the Log | Create Pull Request | Settings → Hosting |
+|---|---|---|
+| ![The result of CI before each commit and in the commit details](docs/ci-status.png) | ![The Create Pull Request window](docs/pull-request.png) | ![Hosts and their tokens in the settings](docs/hosting-settings.png) |
+
 ## What it does
 
 - **Log** — commit graph, branch tree with favourites, filters by text, branch, author, date
@@ -32,6 +36,10 @@ Before its first public release the program was developed under the working name
   resolved in one click, optional help from an AI coding agent you have installed.
 - **Remotes** — fetch, pull, push with a preview of the commits, clone, credentials and SSH
   keys, sign-in errors explained in plain words.
+- **Hostings** — GitHub, GitLab and Bitbucket are recognised by the address of the remote:
+  open a commit, a branch or a file on the hosting, create a pull request, see the open
+  pull requests of a branch and the result of CI next to each commit (the last two need a
+  token in the settings).
 - **Comfort** — several repositories as tabs, light and dark themes, a keymap you can change,
   a command palette, English and Russian interface.
 
