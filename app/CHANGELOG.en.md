@@ -1,6 +1,19 @@
 # Changelog
 
-<!-- last-commit: 9519d20ed37cdcfcf328bca9dd2aaa7e628db0bf -->
+<!-- last-commit: 1f1c3393d418a5315d32e293887becbae3387294 -->
+
+## 0.5.0 — 2026-11-24
+
+### New
+- **Hostings**: GitHub, GitLab and Bitbucket are recognised by the address of the remote. **Open on GitHub** (or GitLab, Bitbucket) in the menu of a commit, a branch and a file opens it on the hosting in the browser.
+- **Create Pull Request…** in the Git menu, in the menu of a branch and as a checkbox in the **Push** window (the window opens after the push). With a token from Settings → Hosting the request is created from the program itself; without one the page of the hosting opens.
+- The open requests of a branch are shown in its menu and in the commit details, and the result of CI as a mark before the commit in the Log and a line with a link in the details. This needs a token in Settings → Hosting.
+- The Settings → **Hosting** page: the hosts of your own servers and their tokens; **Test** checks a token.
+- **Checking for updates**: once a day at start the program asks GitHub whether a newer version is out and tells about it. Help → **Check for Updates…** looks at any time, shows what is new and offers the installer for your system; your browser downloads it. Settings → Window turns it off.
+
+### Fixed
+- On macOS the shortcuts are shown with its own keys (`⌘K`, `⌥⌘A`), and repository tabs are switched with `⌃Tab`.
+- The hint in the diff of a Git LFS file and in the Git → LFS menu promised that **Fetch** downloads the files of other branches. It now says what is true: **Fetch** — the files of the current commit, **Fetch All** — those of earlier commits and other branches too.
 
 ## 0.4.4 — 2026-11-24
 
