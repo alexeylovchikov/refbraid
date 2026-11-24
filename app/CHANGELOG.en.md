@@ -1,6 +1,11 @@
 # Changelog
 
-<!-- last-commit: 1f1c3393d418a5315d32e293887becbae3387294 -->
+<!-- last-commit: 7628176755f42bea36393de256362c60103828f3 -->
+
+## 0.5.1 — 2026-11-24
+
+### New
+- The menu of a branch has **Pull Requests of the Branch…** (at GitLab, **Merge Requests of the Branch…**): a window with every request there was out of that branch — opened, drafts, closed and merged. The ones not merged come first, then the merged ones, the latest first in each part; the number of a request opens it in the browser. It needs a token in Settings → Hosting.
 
 ## 0.5.0 — 2026-11-24
 
