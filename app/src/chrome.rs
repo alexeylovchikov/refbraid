@@ -368,6 +368,7 @@ impl App {
                 if ui.button(tr("Changelog")).clicked() {
                     self.dialog = Some(Dialog::Changelog);
                 }
+                self.update_menu_item(ui);
                 ui.separator();
                 if ui.button(tr("Open Merge Conflict Example")).on_hover_text(tr("A sample repository stopped by merge conflicts of every kind, to try resolving them")).clicked() {
                     self.open_conflict_example();

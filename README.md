@@ -69,6 +69,10 @@ Before its first public release the program was developed under the working name
   open a commit, a branch or a file on the hosting, create a pull request, see the open
   pull requests of a branch and the result of CI next to each commit (the last two need a
   token in the settings).
+- **Updates** — once a day at start the program asks GitHub whether a newer release is
+  published and offers the installer for your system; the download itself is done by your
+  browser. Nothing about you or your repositories is sent. Settings → Window turns it off;
+  Help → Check for Updates looks at any time.
 - **Comfort** — several repositories as tabs, light and dark themes, a keymap you can change,
   a command palette, English and Russian interface.
 

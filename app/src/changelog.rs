@@ -99,49 +99,62 @@ fn inline(text: &str, size: f32, color: Color32) -> LayoutJob {
 }
 
 pub fn body(ui: &mut Ui) {
-    let current = env!("CARGO_PKG_VERSION");
     egui::ScrollArea::vertical().max_height(520.0 + crate::form::grow(ui)).auto_shrink([false, true]).show(ui, |ui| {
         // Keep the text clear of the scroll bar.
         ui.set_max_width(ui.available_width() - 14.0);
-        ui.spacing_mut().item_spacing.y = 4.0;
-        let mut first = true;
-        for line in parse(text()) {
-            match line {
-                Line::Version(v, date) => {
-                    if !first {
-                        ui.add_space(10.0);
-                        theme::hline(ui, ui.cursor().top(), ui.max_rect().left(), ui.max_rect().right());
-                        ui.add_space(10.0);
-                    }
-                    first = false;
-                    ui.horizontal(|ui| {
-                        ui.label(RichText::new(format!("{} {v}", tr("Version"))).size(17.0).strong().color(theme::TEXT()));
-                        if !date.is_empty() {
-                            ui.label(RichText::new(date).color(theme::TEXT_DIM()));
-                        }
-                        if v == current {
-                            ui.label(RichText::new(tr(" current ")).size(11.0).color(Color32::WHITE).background_color(theme::ACCENT()));
-                        }
-                    });
-                }
-                Line::Group(g) => {
-                    ui.add_space(4.0);
-                    ui.label(RichText::new(g).size(13.0).strong().color(theme::TEXT_MID()));
-                }
-                Line::Item(t) => {
-                    ui.horizontal_top(|ui| {
-                        ui.add_space(6.0);
-                        ui.label(RichText::new("•").color(theme::TEXT_DIM()));
-                        ui.add(egui::Label::new(inline(t, 13.0, theme::TEXT())).wrap());
-                    });
-                }
-                Line::Text(t) => {
-                    ui.add(egui::Label::new(inline(t, 13.0, theme::TEXT())).wrap());
-                }
-                Line::Blank => ui.add_space(2.0),
-            }
-        }
+        lines(ui, parse(text()));
     });
+}
+
+/// The description of a release (Help → Check for Updates): the same Markdown subset. A table
+/// row, which the subset does not know, is left out.
+pub fn notes(ui: &mut Ui, text: &str) {
+    egui::ScrollArea::vertical().max_height(320.0 + crate::form::grow(ui)).auto_shrink([false, true]).show(ui, |ui| {
+        ui.set_max_width(ui.available_width() - 14.0);
+        lines(ui, parse(text).into_iter().filter(|l| !matches!(l, Line::Text(t) if t.starts_with('|'))).collect());
+    });
+}
+
+fn lines(ui: &mut Ui, lines: Vec<Line<'_>>) {
+    let current = env!("CARGO_PKG_VERSION");
+    ui.spacing_mut().item_spacing.y = 4.0;
+    let mut first = true;
+    for line in lines {
+        match line {
+            Line::Version(v, date) => {
+                if !first {
+                    ui.add_space(10.0);
+                    theme::hline(ui, ui.cursor().top(), ui.max_rect().left(), ui.max_rect().right());
+                    ui.add_space(10.0);
+                }
+                first = false;
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new(format!("{} {v}", tr("Version"))).size(17.0).strong().color(theme::TEXT()));
+                    if !date.is_empty() {
+                        ui.label(RichText::new(date).color(theme::TEXT_DIM()));
+                    }
+                    if v == current {
+                        ui.label(RichText::new(tr(" current ")).size(11.0).color(Color32::WHITE).background_color(theme::ACCENT()));
+                    }
+                });
+            }
+            Line::Group(g) => {
+                ui.add_space(4.0);
+                ui.label(RichText::new(g).size(13.0).strong().color(theme::TEXT_MID()));
+            }
+            Line::Item(t) => {
+                ui.horizontal_top(|ui| {
+                    ui.add_space(6.0);
+                    ui.label(RichText::new("•").color(theme::TEXT_DIM()));
+                    ui.add(egui::Label::new(inline(t, 13.0, theme::TEXT())).wrap());
+                });
+            }
+            Line::Text(t) => {
+                ui.add(egui::Label::new(inline(t, 13.0, theme::TEXT())).wrap());
+            }
+            Line::Blank => ui.add_space(2.0),
+        }
+    }
 }
 
 #[cfg(test)]

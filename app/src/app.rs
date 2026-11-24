@@ -867,6 +867,8 @@ pub struct App {
     pub jira: crate::jira::Cache,
     /// What the Git hostings told about the open repositories (pull requests, CI).
     pub hosting: crate::hosting::Cache,
+    /// Looking for a newer version of the program.
+    pub update: crate::update_view::State,
     /// The Create Pull Request window.
     pub new_request: Option<crate::hosting_view::NewRequest>,
     /// The branch to offer a pull request for once the running push is done (`Then::NewRequest`).
@@ -1008,6 +1010,7 @@ impl App {
             jira: Default::default(),
             hosting: Default::default(),
             new_request: None,
+            update: Default::default(),
             pending_request: None,
             fake_site: None,
             pushed_memo: None,
@@ -1414,6 +1417,20 @@ impl App {
                     } else if let Some(i) = app.repo.as_ref().and_then(|r| r.visible.first().copied()) {
                         app.select_commit(i);
                     }
+                }
+                if view.contains("newversion") {
+                    // A newer release as GitHub would describe it (nothing is asked over the network).
+                    let v = env!("CARGO_PKG_VERSION");
+                    let next = crate::update::version_of(v).map(|[a, b, c]| format!("{a}.{b}.{}", c + 1)).unwrap_or_else(|| "9.9.9".into());
+                    let base = format!("https://github.com/{}/releases", crate::update::REPO);
+                    let files = ["refbraid-{v}-1.el10.x86_64.rpm", "refbraid-{v}-1.el9.x86_64.rpm", "refbraid_{v}-1_amd64.deb", "refbraid-{v}-x86_64.AppImage", "refbraid-{v}-windows-x64.msi", "refbraid-{v}-macos-universal.dmg"];
+                    app.update.latest = Some(crate::update::Release {
+                        url: format!("{base}/tag/v{next}"),
+                        body: "## Downloads\n\n| File | For |\n|---|---|\n| `a` | b |\n\n## What's new\n\n### New\n- **Hostings**: GitHub, GitLab and Bitbucket are recognised by the address of the remote. **Open on …** in the menu of a commit, a branch and a file opens it in the browser.\n- **Create Pull Request…** in the Git menu, in the menu of a branch and in the Push window; with a token in Settings → Hosting the request is created from the program.\n- The result of CI is shown before each commit in the Log and in the commit details.\n- Help → **Check for Updates…**: the program tells when a newer version is published.\n\n### Fixed\n- On macOS the shortcuts are shown with its own keys (`⌘K`, `⌥⌘A`).\n".into(),
+                        assets: files.iter().map(|f| f.replace("{v}", &next)).map(|f| (f.clone(), format!("{base}/download/v{next}/{f}"))).collect(),
+                        version: next,
+                    });
+                    app.update.open = true;
                 }
                 if view.contains("welcome") {
                     app.repo = None;
@@ -3673,6 +3690,7 @@ impl App {
         self.sync_theme(&ctx);
         self.remember_maximized(&ctx);
         self.poll_jobs();
+        self.update_tick(&ctx);
         self.poll_log();
         self.poll_refs();
         if let Some(repo) = self.repo.as_mut() {
@@ -3864,6 +3882,7 @@ impl App {
         self.branch_windows(&ctx);
         self.lfs_window(&ctx);
         self.new_request_window(&ctx);
+        self.update_window(&ctx);
         self.toasts(&ctx);
         self.window_edges(&ctx);
         self.screenshot_step(&ctx);

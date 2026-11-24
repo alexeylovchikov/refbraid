@@ -66,7 +66,7 @@ impl Page {
     /// Words the search box matches besides the title.
     fn keywords(self) -> &'static str {
         match self {
-            Page::Window => "title bar minimize maximize close buttons system built-in decorations window colour color tint palette accent theme language english russian interface язык repository tabs strip вкладки",
+            Page::Window => "title bar minimize maximize close buttons system built-in decorations window colour color tint palette accent theme language english russian interface язык repository tabs strip вкладки update updates new version обновление",
             Page::Keymap => "keyboard shortcut shortcuts keys hotkey hotkeys keymap клавиши сочетания",
             Page::Credentials => "credentials password token ssh key keys public private helper sign in login authentication пароль ключ вход",
             Page::Commit => "ai assistant prompt commit message generation",
@@ -865,6 +865,19 @@ impl App {
                     self.restart_requested = true;
                 }
             });
+        }
+        ui.add_space(14.0);
+        ui.label(RichText::new(tr("Updates")).strong().color(theme::TEXT()));
+        ui.add_space(4.0);
+        if let Some(d) = self.settings_draft.as_mut() {
+            let mut look = !d.s.no_update_check;
+            if ui
+                .checkbox(&mut look, tr("Look for a newer version of RefBraid when it starts"))
+                .on_hover_text(tr("Once a day the program asks GitHub for the latest release (nothing about you or your repositories is sent) and tells when there is a newer one. Help → Check for Updates looks at any time."))
+                .changed()
+            {
+                d.s.no_update_check = !look;
+            }
         }
     }
 

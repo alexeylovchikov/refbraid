@@ -62,6 +62,8 @@ mod skills;
 mod testrepo;
 mod theme;
 mod undo;
+mod update;
+mod update_view;
 
 use eframe::egui;
 use std::path::PathBuf;

@@ -381,6 +381,7 @@ Features that were not among the tasks but appeared after 0.3.4:
 - **Checkout Branch** in the context menu of a commit: switching to a branch that ends at this commit.
 - **Modal windows** can be moved and resized; in the Push window and the window for splitting changes into commits the divider between the panels can be dragged.
 - **Search fields** have a clear button.
+- **Updates** (after 0.4.4, `update.rs`, `update_view.rs`). Once a day at start the program asks GitHub for the latest release of its repository, without signing in, and shows a notice when it is newer than the running version; `Help → Check for Updates…` looks at any time. The window shows what is new and offers the installer for this computer (RPM for EL9 / EL10, deb, AppImage, MSI, `.dmg`, told from how the program was installed), which the browser downloads; where that cannot be told (built from the sources, unpacked from the zip, another distribution) it opens the release page. "Skip This Version" stops the notice for that version; Settings → Window turns the look at start off. Not done: the program does not download or install anything itself and does not check the checksums; the notice has not been seen for real, because no release newer than the running build exists yet.
 
 ---
 

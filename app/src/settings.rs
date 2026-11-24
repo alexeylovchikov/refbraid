@@ -155,6 +155,11 @@ pub struct Settings {
     pub jira_email: String,
     /// Show the JIRA status of issues in the commit details.
     pub jira_on: bool,
+    /// Don't look on GitHub for a newer version when the program starts.
+    pub no_update_check: bool,
+    /// When the program last looked (seconds since 1970), and the version not to tell about again.
+    pub update_checked: i64,
+    pub update_skip: String,
     /// Git hostings: which program runs on a host and the token for its API.
     pub hosting: Vec<crate::hosting::Account>,
     /// Height of the commit details panel under the changed files (0 = automatic).
@@ -379,6 +384,12 @@ impl Settings {
                 s.builtin_title_bar = true;
             } else if line == "titlebar=system" {
                 s.builtin_title_bar = false;
+            } else if line == "updatecheck=0" {
+                s.no_update_check = true;
+            } else if let Some(v) = line.strip_prefix("updatechecked=") {
+                s.update_checked = v.trim().parse().unwrap_or(0);
+            } else if let Some(v) = line.strip_prefix("updateskip=") {
+                s.update_skip = v.trim().to_string();
             } else if line == "autorefresh=0" {
                 s.no_auto_refresh = true;
             } else if line == "smartcheckout=1" {
@@ -571,6 +582,15 @@ impl Settings {
         }
         if self.no_auto_refresh {
             out.push_str("autorefresh=0\n");
+        }
+        if self.no_update_check {
+            out.push_str("updatecheck=0\n");
+        }
+        if self.update_checked > 0 {
+            out.push_str(&format!("updatechecked={}\n", self.update_checked));
+        }
+        if !self.update_skip.trim().is_empty() {
+            out.push_str(&format!("updateskip={}\n", self.update_skip.trim()));
         }
         if self.smart_checkout {
             out.push_str("smartcheckout=1\n");
