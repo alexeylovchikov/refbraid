@@ -1,11 +1,13 @@
 # A version tag (vX.Y.Z, made by `make release-all` and pushed) builds the installers with
 # the same scripts as `make dist` and publishes them as a GitHub release, with the section
-# of that version from the changelog as its description.
+# of that version from the changelog as its description. Started by hand (Actions → Release →
+# Run workflow) it only builds: the installers stay with the run and nothing is published.
 name: Release
 
 on:
   push:
     tags: ['v[0-9]+.[0-9]+.[0-9]+']
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -40,6 +42,27 @@ jobs:
         with:
           name: rpm-el${{ matrix.rhel }}
           path: app/dist/*.rpm
+          if-no-files-found: error
+
+  # Compiled on Ubuntu 22.04 so the package also installs on Debian 12.
+  deb:
+    name: Debian and Ubuntu package
+    runs-on: ubuntu-latest
+    container: ubuntu:22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Tools
+        run: |
+          apt-get update -qq
+          DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends gcc libc6-dev curl ca-certificates
+          curl -sSf https://sh.rustup.rs | sh -s -- -y -q --profile minimal --default-toolchain stable
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+      - name: Build the package
+        run: sh packaging/build-deb.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: deb
+          path: app/dist/*.deb
           if-no-files-found: error
 
   # Compiled on RHEL 8 so the one file also starts on older systems.
@@ -86,7 +109,8 @@ jobs:
   publish:
     name: Publish the release
     runs-on: ubuntu-latest
-    needs: [rpm, appimage, windows]
+    needs: [rpm, deb, appimage, windows]
+    if: github.ref_type == 'tag'
     permissions:
       contents: write
     defaults:
@@ -101,10 +125,13 @@ jobs:
       - name: Checksums and notes
         run: |
           version="${GITHUB_REF_NAME#v}"
+          built=$(sed -n 's/^version = "\(.*\)"/\1/p' app/Cargo.toml | head -n 1)
+          if [ "$version" != "$built" ]; then
+            echo "::error::The tag says $version, app/Cargo.toml says $built."
+            exit 1
+          fi
           ( cd dist && sha256sum * > SHA256SUMS.txt && cat SHA256SUMS.txt )
-          # The section of this version from the English changelog.
-          awk -v v="$version" '$1 == "##" { on = ($2 == v) ; next } on' app/CHANGELOG.en.md > notes.md
-          [ -s notes.md ] || echo "See app/CHANGELOG.en.md." > notes.md
+          sh app/packaging/release-notes.sh "$version" dist > notes.md
           cat notes.md
       - name: Create the release
         env:
