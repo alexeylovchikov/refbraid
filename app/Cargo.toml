@@ -15,6 +15,9 @@ image = { version = "0.25.10", default-features = false, features = ["png", "jpe
 resvg = "0.45"
 regex = { version = "1.13.1", default-features = false, features = ["std", "unicode"] }
 rfd = "0.18.0"
+# Access tokens are kept in the password store of the system (Secret Service, Windows
+# Credential Manager, macOS Keychain), not in the settings file.
+keyring = "4.2.0"
 
 # Windows: also draw with Direct3D 12, which works over Remote Desktop and in VMs.
 [target.'cfg(windows)'.dependencies]

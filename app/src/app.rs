@@ -319,6 +319,13 @@ fn details_within(dir: &Path, hash: &str, old: Option<&CommitDetails>, wait: u64
 /// The window, to draw again when a background load is done.
 static REPAINT: std::sync::OnceLock<egui::Context> = std::sync::OnceLock::new();
 
+/// Ask for another frame from a thread that has something for it.
+pub fn repaint() {
+    if let Some(ctx) = REPAINT.get() {
+        ctx.request_repaint();
+    }
+}
+
 impl Repo {
     /// A repository at `root` with nothing loaded yet.
     pub fn new(root: PathBuf, name: String, settings: &Settings) -> Repo {
@@ -870,6 +877,11 @@ pub struct App {
     pub jira: crate::jira::Cache,
     /// What the Git hostings told about the open repositories (pull requests, CI).
     pub hosting: crate::hosting::Cache,
+    /// What the threads that talk to the password store of the system did, and what went wrong
+    /// there (shown on the settings pages that hold tokens).
+    pub secrets_tx: Sender<crate::secrets::Done>,
+    pub secrets_rx: Receiver<crate::secrets::Done>,
+    pub secrets_note: Option<String>,
     /// Looking for a newer version of the program.
     pub update: crate::update_view::State,
     /// The window with all the pull requests of a branch.
@@ -964,6 +976,7 @@ impl App {
     pub fn new(ctx: &egui::Context, path: Option<PathBuf>, screenshot: Option<PathBuf>) -> Self {
         let (tx, rx) = channel();
         let keep_tabs = path.is_none() && screenshot.is_none() && !cfg!(test);
+        let (secrets_tx, secrets_rx) = channel();
         let settings = Settings::load();
         if !cfg!(test) {
             git::set_diff_ws(settings.diff_ws);
@@ -1017,6 +1030,9 @@ impl App {
             new_request: None,
             branch_requests: None,
             update: Default::default(),
+            secrets_tx,
+            secrets_rx,
+            secrets_note: None,
             pending_request: None,
             fake_site: None,
             pushed_memo: None,
@@ -1064,6 +1080,12 @@ impl App {
             undo_note: None,
         };
         let _ = REPAINT.set(ctx.clone());
+        if app.screenshot.is_some() {
+            // The password store of the system belongs to the user: a screenshot run leaves it alone.
+            crate::secrets::turn_off();
+        } else {
+            app.start_secrets();
+        }
         if app.screenshot.is_some() {
             app.hosting.offline = true;
             LOG_WAIT_MS.store(u64::MAX, std::sync::atomic::Ordering::Relaxed);
@@ -1272,9 +1294,9 @@ impl App {
                 } else if view.contains("hostpage") {
                     use crate::hosting::{Account, Kind};
                     app.settings.hosting = vec![
-                        Account { kind: Kind::GitHub, host: "github.com".into(), token: "example-token-not-a-real-one".into(), email: String::new() },
-                        Account { kind: Kind::GitLab, host: "code.example.com".into(), token: "example-token-not-a-real-one".into(), email: String::new() },
-                        Account { kind: Kind::Bitbucket, host: "bitbucket.org".into(), token: String::new(), email: String::new() },
+                        Account { kind: Kind::GitHub, host: "github.com".into(), token: "example-token-not-a-real-one".into(), ..Default::default() },
+                        Account { kind: Kind::GitLab, host: "code.example.com".into(), token: "example-token-not-a-real-one".into(), ..Default::default() },
+                        Account { kind: Kind::Bitbucket, host: "bitbucket.org".into(), ..Default::default() },
                     ];
                     app.open_settings(Some(crate::settings_view::Page::Hosting));
                     if let Some(d) = app.settings_draft.as_mut() {
@@ -3746,6 +3768,7 @@ impl App {
         self.remember_maximized(&ctx);
         self.poll_jobs();
         self.update_tick(&ctx);
+        self.poll_secrets();
         self.poll_log();
         self.poll_refs();
         if let Some(repo) = self.repo.as_mut() {

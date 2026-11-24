@@ -561,25 +561,44 @@ impl App {
                 .color(theme::TEXT_MID()),
         );
         ui.add_space(10.0);
+        if let Some(n) = &self.secrets_note {
+            ui.add(egui::Label::new(RichText::new(n).color(theme::STAR()).size(12.0)).wrap());
+            ui.add_space(8.0);
+        }
         let mut remove: Option<usize> = None;
         let mut check: Option<usize> = None;
         let busy = d.host_wait.is_some();
         for (i, a) in d.s.hosting.iter_mut().enumerate() {
             let mut changed = false;
+            // The host the saved token belongs to: the token does not follow the row to another one.
+            let mut moved = false;
             ui.horizontal(|ui| {
                 egui::ComboBox::from_id_salt(("hosting_kind", i)).width(96.0).selected_text(a.kind.name()).show_ui(ui, |ui| {
                     for k in KINDS {
-                        changed |= ui.selectable_value(&mut a.kind, k, k.name()).changed();
+                        moved |= ui.selectable_value(&mut a.kind, k, k.name()).changed();
                     }
                 });
                 let r = ui.add(egui::TextEdit::singleline(&mut a.host).hint_text(a.kind.public_host()).desired_width(190.0));
-                changed |= r.changed();
+                moved |= r.changed();
                 theme::edit_menu(r);
-                let r = ui.add(egui::TextEdit::singleline(&mut a.token).password(!d.show_token).hint_text(tr("access token")).desired_width(210.0));
+                changed |= moved;
+                if moved && a.has_token() {
+                    a.token.clear();
+                    a.kept = crate::secrets::Kept::File;
+                }
+                // Write only: a saved token is never shown, a new one replaces it.
+                let hint = if a.has_token() { tr("saved — type to replace") } else { tr("access token") };
+                let r = ui.add(egui::TextEdit::singleline(&mut a.entered).password(true).hint_text(hint).desired_width(210.0));
                 changed |= r.changed();
                 theme::edit_menu(r);
                 if ui.add_enabled(!busy, egui::Button::new(tr("Test"))).on_hover_text(tr("Sign in with the token and say whose it is")).clicked() {
                     check = Some(i);
+                }
+                if a.has_token() && ui.button(tr("Forget")).on_hover_text(tr("Remove the saved token of this host")).clicked() {
+                    a.token.clear();
+                    a.entered.clear();
+                    a.kept = crate::secrets::Kept::File;
+                    changed = true;
                 }
                 if ui.button("✕").on_hover_text(tr("Remove this host")).clicked() {
                     remove = Some(i);
@@ -625,9 +644,6 @@ impl App {
                 let host = if d.s.hosting.iter().any(|a| a.host == kind.public_host()) { String::new() } else { kind.public_host().to_string() };
                 d.s.hosting.push(Account { kind, host, ..Default::default() });
             }
-            if !d.s.hosting.is_empty() && ui.button(if d.show_token { tr("Hide Tokens") } else { tr("Show Tokens") }).clicked() {
-                d.show_token = !d.show_token;
-            }
         });
         if let Some(i) = remove {
             d.s.hosting.remove(i);
@@ -635,13 +651,23 @@ impl App {
             d.host_wait = None;
         }
         if let Some(i) = check {
-            let account = d.s.hosting[i].clone();
+            // The token just typed, else the saved one (which may not be read from the store yet).
+            let mut account = d.s.hosting[i].clone();
+            if !account.entered.trim().is_empty() {
+                account.token = account.entered.trim().to_string();
+            }
+            let unread = account.token.is_empty() && account.kept == crate::secrets::Kept::Store;
             let (tx, rx) = std::sync::mpsc::channel();
+            if unread {
+                let _ = tx.send(Err(tr("the saved token is not read from the password store of the system").to_string()));
+            }
             let ctx = ui.ctx().clone();
-            std::thread::spawn(move || {
-                let _ = tx.send(crate::hosting::test(&account));
-                ctx.request_repaint();
-            });
+            if !unread {
+                std::thread::spawn(move || {
+                    let _ = tx.send(crate::hosting::test(&account));
+                    ctx.request_repaint();
+                });
+            }
             d.host_wait = Some((i, rx));
             d.host_check = None;
         }
@@ -653,7 +679,7 @@ impl App {
         }
         ui.add_space(10.0);
         ui.label(
-            RichText::new(tr("Tokens. GitHub: a fine-grained token with Pull requests (read and write) and Actions (read), or a classic one with the repo scope. GitLab: a personal, project or group access token with the api scope. Bitbucket Cloud: an API token with the pull request, repository and pipeline scopes together with the e-mail of the account, or a repository or workspace access token without an e-mail. A token is sent only to the host in its row and is kept in the settings file on this computer."))
+            RichText::new(tr("Tokens. GitHub: a fine-grained token with Pull requests (read and write) and Actions (read), or a classic one with the repo scope. GitLab: a personal, project or group access token with the api scope. Bitbucket Cloud: an API token with the pull request, repository and pipeline scopes together with the e-mail of the account, or a repository or workspace access token without an e-mail. A token is sent only to the host in its row. It is kept in the password store of the system (the keyring on Linux, the Credential Manager on Windows, the Keychain on macOS) and is not shown again once saved; where there is no such store it is kept in the settings file."))
                 .color(theme::TEXT_DIM())
                 .size(12.0),
         );
@@ -740,7 +766,7 @@ mod tests {
         assert_eq!((f.source.as_str(), f.target.as_str(), f.title.as_str(), f.body.as_str(), f.pushed, f.note.is_none()), ("feature/search", main.as_str(), "feature/search", "- Add the search\n- Show the results", true, true));
         assert_eq!(f.targets, vec![main.clone()]);
         // With a token for the host the open request of the branch is known, and no other is offered.
-        app.settings.hosting = vec![Account { kind: Kind::GitHub, host: "github.com".into(), token: "t".into(), email: String::new() }];
+        app.settings.hosting = vec![Account { kind: Kind::GitHub, host: "github.com".into(), token: "t".into(), ..Default::default() }];
         let site = app.site().unwrap();
         assert!(site.connected());
         let open = Request { number: "5".into(), source: "feature/search".into(), target: main.clone(), ..Default::default() };

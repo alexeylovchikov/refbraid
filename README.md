@@ -69,6 +69,9 @@ Before its first public release the program was developed under the working name
   open a commit, a branch or a file on the hosting, create a pull request, see the open
   pull requests of a branch and the result of CI next to each commit (the last two need a
   token in the settings).
+- **Tokens** — the access tokens of JIRA and of the hostings are kept in the password store
+  of your system (the keyring on Linux, the Credential Manager on Windows, the Keychain on
+  macOS), not in the settings file, and are not shown again once saved.
 - **Updates** — once a day at start the program asks GitHub whether a newer release is
   published and offers the installer for your system; the download itself is done by your
   browser. Nothing about you or your repositories is sent. Settings → Window turns it off;

@@ -67,13 +67,32 @@ pub struct Account {
     pub token: String,
     /// Bitbucket: the Atlassian account e-mail of an API token (empty: an access token).
     pub email: String,
+    /// Where the token is kept. In the store of the system, `token` is empty until it is read.
+    pub kept: crate::secrets::Kept,
+    /// A new token typed into the settings window and not applied yet (never saved).
+    pub entered: String,
 }
 
 impl Account {
-    /// The line of the settings file.
+    /// The name of the token's entry in the store of the system.
+    pub fn key(&self) -> String {
+        crate::secrets::hosting_key(self.kind, &self.host)
+    }
+
+    /// A token is saved for the host (it may not be read from the store yet).
+    pub fn has_token(&self) -> bool {
+        !self.token.trim().is_empty() || self.kept != crate::secrets::Kept::File
+    }
+
+    /// The line of the settings file. The token is in it only when it is kept there; one in
+    /// the store of the system leaves the word "store" in a fifth field (a build that knows
+    /// four fields reads the line as a host without a token).
     pub fn to_line(&self) -> String {
         let f = |s: &str| s.trim().replace(['\t', '\n', '\r'], " ");
-        format!("{}\t{}\t{}\t{}", self.kind.key(), f(&self.host), f(&self.email), f(&self.token))
+        match self.kept {
+            crate::secrets::Kept::File => format!("{}\t{}\t{}\t{}", self.kind.key(), f(&self.host), f(&self.email), f(&self.token)),
+            _ => format!("{}\t{}\t{}\t\tstore", self.kind.key(), f(&self.host), f(&self.email)),
+        }
     }
     pub fn from_line(line: &str) -> Option<Account> {
         let mut f = line.split('\t');
@@ -81,7 +100,8 @@ impl Account {
         let host = f.next()?.trim().to_string();
         let email = f.next().unwrap_or("").trim().to_string();
         let token = f.next().unwrap_or("").trim().to_string();
-        (!host.is_empty()).then_some(Account { kind, host, token, email })
+        let kept = if f.next().map(str::trim) == Some("store") && token.is_empty() { crate::secrets::Kept::Store } else { crate::secrets::Kept::File };
+        (!host.is_empty()).then_some(Account { kind, host, token, email, kept, entered: String::new() })
     }
 }
 
@@ -770,8 +790,8 @@ mod tests {
     #[test]
     fn knows_the_hosting_and_gives_a_token_only_to_its_host() {
         let accounts = vec![
-            Account { kind: Kind::GitLab, host: "code.example.com".into(), token: " glpat-x ".into(), email: String::new() },
-            Account { kind: Kind::GitHub, host: "GitHub.com".into(), token: "ghp-y".into(), email: String::new() },
+            Account { kind: Kind::GitLab, host: "code.example.com".into(), token: " glpat-x ".into(), ..Default::default() },
+            Account { kind: Kind::GitHub, host: "GitHub.com".into(), token: "ghp-y".into(), ..Default::default() },
         ];
         let s = Site::of("git@code.example.com:team/app.git", &accounts).unwrap();
         assert_eq!((s.kind, s.token.as_str(), s.connected()), (Kind::GitLab, "glpat-x", true));
@@ -913,15 +933,28 @@ mod tests {
 
     #[test]
     fn keeps_a_host_in_the_settings_line() {
-        let a = Account { kind: Kind::Bitbucket, host: " bitbucket.org ".into(), token: "tok\ten".into(), email: "me@example.com".into() };
+        let a = Account { kind: Kind::Bitbucket, host: " bitbucket.org ".into(), token: "tok\ten".into(), email: "me@example.com".into(), ..Default::default() };
         let back = Account::from_line(&a.to_line()).unwrap();
-        assert_eq!(back, Account { kind: Kind::Bitbucket, host: "bitbucket.org".into(), token: "tok en".into(), email: "me@example.com".into() });
+        assert_eq!(back, Account { kind: Kind::Bitbucket, host: "bitbucket.org".into(), token: "tok en".into(), email: "me@example.com".into(), ..Default::default() });
         // No token and no e-mail: the empty fields at the end may be gone.
         let plain = Account { kind: Kind::GitLab, host: "code.example.com".into(), ..Default::default() };
         assert_eq!(Account::from_line(&plain.to_line()), Some(plain.clone()));
         assert_eq!(Account::from_line("gitlab\tcode.example.com"), Some(plain));
         assert_eq!(Account::from_line("svn\thost\t\t"), None);
         assert_eq!(Account::from_line("github\t\t\ttoken"), None);
+        // A token in the store of the system never gets into the line, typed or read.
+        use crate::secrets::Kept;
+        let kept = Account { kind: Kind::GitHub, host: "github.com".into(), token: "secret".into(), kept: Kept::Store, entered: "typed".into(), ..Default::default() };
+        assert_eq!(kept.to_line(), "github\tgithub.com\t\t\tstore");
+        let moving = Account { kept: Kept::Moving, ..kept.clone() };
+        assert_eq!(moving.to_line(), "github\tgithub.com\t\t\tstore");
+        let back = Account::from_line(&kept.to_line()).unwrap();
+        assert_eq!((back.kept, back.token.as_str(), back.entered.as_str(), back.has_token()), (Kept::Store, "", "", true));
+        assert_eq!(kept.key(), "hosting:github:github.com");
+        // An old build reads the same line as a host without a token.
+        let line = kept.to_line();
+        let old: Vec<&str> = line.split('\t').take(4).collect();
+        assert_eq!(old, vec!["github", "github.com", "", ""]);
     }
 
     #[test]

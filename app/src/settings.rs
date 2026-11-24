@@ -153,6 +153,8 @@ pub struct Settings {
     pub jira_url: String,
     pub jira_token: String,
     pub jira_email: String,
+    /// Where the JIRA token is kept (in the store of the system, `jira_token` is empty until read).
+    pub jira_kept: crate::secrets::Kept,
     /// Show the JIRA status of issues in the commit details.
     pub jira_on: bool,
     /// Don't look on GitHub for a newer version when the program starts.
@@ -414,6 +416,8 @@ impl Settings {
                 s.jira_email = v.to_string();
             } else if let Some(v) = line.strip_prefix("hosting=") {
                 s.hosting.extend(crate::hosting::Account::from_line(v));
+            } else if line == "jirakept=store" {
+                s.jira_kept = crate::secrets::Kept::Store;
             } else if line == "jira=1" {
                 s.jira_on = true;
             } else if let Some(v) = line.strip_prefix("infoheight=") {
@@ -616,10 +620,16 @@ impl Settings {
         if self.jira_on {
             out.push_str("jira=1\n");
         }
-        for (k, v) in [("jiraurl", &self.jira_url), ("jiratoken", &self.jira_token), ("jiraemail", &self.jira_email)] {
+        // A token kept in the store of the system leaves only a mark here.
+        let in_file = self.jira_kept == crate::secrets::Kept::File;
+        let no_token = String::new();
+        for (k, v) in [("jiraurl", &self.jira_url), ("jiratoken", if in_file { &self.jira_token } else { &no_token }), ("jiraemail", &self.jira_email)] {
             if !v.trim().is_empty() {
                 out.push_str(&format!("{k}={}\n", v.trim()));
             }
+        }
+        if !in_file {
+            out.push_str("jirakept=store\n");
         }
         for a in self.hosting.iter().filter(|a| !a.host.trim().is_empty()) {
             out.push_str(&format!("hosting={}\n", a.to_line()));
@@ -682,9 +692,10 @@ impl Settings {
             out.push_str(&format!("msg={}\n", esc(m)));
         }
         let _ = std::fs::write(&f, out);
-        // The file may hold the tokens of JIRA and of the hostings: readable by its owner only.
+        // The file may hold tokens of JIRA and of the hostings (where the system has no password
+        // store): readable by its owner only.
         #[cfg(unix)]
-        if !self.jira_token.is_empty() || self.hosting.iter().any(|a| !a.token.is_empty()) {
+        if (in_file && !self.jira_token.is_empty()) || self.hosting.iter().any(|a| a.kept == crate::secrets::Kept::File && !a.token.is_empty()) {
             use std::os::unix::fs::PermissionsExt;
             let _ = std::fs::set_permissions(&f, std::fs::Permissions::from_mode(0o600));
         }

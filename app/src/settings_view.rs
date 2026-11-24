@@ -131,9 +131,10 @@ pub struct SettingsDraft {
     pub jira_check: Option<Result<String, String>>,
     pub jira_wait: Option<std::sync::mpsc::Receiver<Result<String, String>>>,
     /// Hosting: the same for the host in that row.
+    /// A new JIRA token typed and not applied yet.
+    pub jira_entered: String,
     pub host_check: Option<(usize, Result<String, String>)>,
     pub host_wait: Option<(usize, std::sync::mpsc::Receiver<Result<String, String>>)>,
-    pub show_token: bool,
     /// Folder typed into "Additional folders".
     pub new_skill_dir: String,
     /// Skills found with the settings being edited, and the settings they were found with.
@@ -196,9 +197,9 @@ impl App {
             git_check: None,
             jira_check: None,
             jira_wait: None,
+            jira_entered: String::new(),
             host_check: None,
             host_wait: None,
-            show_token: false,
             new_skill_dir: String::new(),
             skills: vec![],
             skills_key: None,
@@ -241,6 +242,9 @@ impl App {
         crate::graph::set_fixed_lanes(s.graph_fixed);
         crate::i18n::set(crate::i18n::Lang::from_code(&s.language));
         crate::encoding::set_fallback(s.fallback_enc);
+        let jira_entered = std::mem::take(&mut self.settings_draft.as_mut().unwrap().jira_entered);
+        let todo = crate::secrets_view::token_changes(&self.settings, &mut s, jira_entered.trim(), crate::secrets::enabled());
+        self.run_secrets(todo);
         self.settings = s.clone();
         if let Some(dr) = self.settings_draft.as_mut() {
             dr.s = s;
@@ -1212,6 +1216,10 @@ impl App {
         ui.add_space(10.0);
         ui.checkbox(&mut d.s.jira_on, tr("Show issue statuses from JIRA"));
         ui.add_space(8.0);
+        if let Some(n) = &self.secrets_note {
+            ui.add(egui::Label::new(RichText::new(n).color(theme::STAR()).size(12.0)).wrap());
+            ui.add_space(8.0);
+        }
         let mut changed = false;
         ui.add_enabled_ui(d.s.jira_on, |ui| {
             egui::Grid::new("jira_grid").num_columns(2).spacing(vec2(12.0, 8.0)).show(ui, |ui| {
@@ -1219,15 +1227,26 @@ impl App {
                 ui.label("Server URL:");
                 let r = ui.add(egui::TextEdit::singleline(&mut d.s.jira_url).hint_text(tr("https://jira.example.com")).desired_width(w));
                 changed |= r.changed();
+                // The saved token belongs to the server it was entered for.
+                if r.changed() && (!d.s.jira_token.is_empty() || d.s.jira_kept != crate::secrets::Kept::File) {
+                    d.s.jira_token.clear();
+                    d.s.jira_kept = crate::secrets::Kept::File;
+                }
                 theme::edit_menu(r);
                 ui.end_row();
                 ui.label("Token:");
                 ui.horizontal(|ui| {
-                    let r = ui.add(egui::TextEdit::singleline(&mut d.s.jira_token).password(!d.show_token).hint_text(tr("personal access token")).desired_width(w - 58.0));
+                    // Write only: a saved token is never shown, a new one replaces it.
+                    let saved = !d.s.jira_token.is_empty() || d.s.jira_kept != crate::secrets::Kept::File;
+                    let hint = if saved { tr("saved — type to replace") } else { tr("personal access token") };
+                    let r = ui.add(egui::TextEdit::singleline(&mut d.jira_entered).password(true).hint_text(hint).desired_width(w - 70.0));
                     changed |= r.changed();
                     theme::edit_menu(r);
-                    if ui.add_sized([50.0, 20.0], egui::Button::new(if d.show_token { "Hide" } else { "Show" })).clicked() {
-                        d.show_token = !d.show_token;
+                    if ui.add_enabled(saved, egui::Button::new(tr("Forget")).min_size(vec2(62.0, 20.0))).on_hover_text(tr("Remove the saved token")).clicked() {
+                        d.s.jira_token.clear();
+                        d.jira_entered.clear();
+                        d.s.jira_kept = crate::secrets::Kept::File;
+                        changed = true;
                     }
                 });
                 ui.end_row();
@@ -1239,7 +1258,7 @@ impl App {
             });
             ui.add_space(4.0);
             ui.label(
-                RichText::new(tr("JIRA Server / Data Center: create a personal access token in your profile (Profile → Personal Access Tokens) and leave E-mail empty. Jira Cloud: create an API token at id.atlassian.com and enter the e-mail of your account. The token is kept in the settings file on this computer."))
+                RichText::new(tr("JIRA Server / Data Center: create a personal access token in your profile (Profile → Personal Access Tokens) and leave E-mail empty. Jira Cloud: create an API token at id.atlassian.com and enter the e-mail of your account. The token is kept in the password store of the system and is not shown again once saved; where there is no such store it is kept in the settings file."))
                     .color(theme::TEXT_DIM())
                     .size(12.0),
             );
@@ -1248,6 +1267,9 @@ impl App {
                 let busy = d.jira_wait.is_some();
                 if ui.add_enabled(!busy, egui::Button::new(tr("Test Connection"))).clicked() {
                     let mut s = d.s.clone();
+                    if !d.jira_entered.trim().is_empty() {
+                        s.jira_token = d.jira_entered.trim().to_string();
+                    }
                     s.jira_on = true;
                     let cfg = crate::jira::Config::from(&s).unwrap_or_default();
                     let (tx, rx) = std::sync::mpsc::channel();

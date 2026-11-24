@@ -30,6 +30,8 @@ mod i18n_ru;
 mod wordiff;
 mod push_view;
 mod rebase;
+mod secrets;
+mod secrets_view;
 mod reflog;
 mod reflog_view;
 mod rebase_view;
