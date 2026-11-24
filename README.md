@@ -53,7 +53,7 @@ cargo run                 # or: cargo run -- /path/to/repository
 cargo test
 ```
 
-Installers (RPM, AppImage, Windows MSI and zip) are built with `make dist`; see
+Installers (RPM, deb, AppImage, Windows MSI and zip) are built with `make dist`; see
 [app/packaging/README.md](app/packaging/README.md). `make` with no target lists every command.
 
 ## Origin

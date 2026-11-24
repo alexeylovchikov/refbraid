@@ -1,7 +1,7 @@
 # Installers
 
 Shortcut: the `Makefile` in the program folder runs all of this. `make` lists the commands, e.g.
-`make bump-patch` (raise the version), `make dist` (RHEL 10 + RHEL 9 + Windows 64 + AppImage),
+`make bump-patch` (raise the version), `make dist` (RHEL 10 + RHEL 9 + Debian/Ubuntu + Windows 64 + AppImage),
 `make release-all` (new version, changelog written by Claude Code from the commits, commit, tag `v<version>`, then `make dist`; see `release.sh`). The version is changed everywhere by `packaging/set-version.sh`.
 
 The version comes from `Cargo.toml`; the RPM release number is in `rpm/refbraid.spec`.
@@ -15,6 +15,10 @@ All container builds need podman or docker.
 
   Every package adds RefBraid to the applications menu, to "Open With" for folders in Files,
   and "Open in RefBraid" to the folder right-click menu when nautilus-python is installed.
+- `sh packaging/build-deb.sh` builds the Debian / Ubuntu package in an Ubuntu 22.04 container:
+  `dist/refbraid_<version>-<release>_amd64.deb`, for Ubuntu 22.04 and newer and Debian 12 and
+  newer (glibc 2.35). It installs the same files as the RPM; the package description is
+  `deb/control`, the release number is the one of the RPM spec.
 - `sh packaging/build-appimage.sh` builds `dist/refbraid-<version>-x86_64.AppImage`, a single file
   that runs on most Linux systems (compiled on RHEL 8, so glibc 2.28 or newer is enough). Make it
   executable and start it; File → Settings → File Manager adds it to the Files app.

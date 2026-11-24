@@ -1,0 +1,15 @@
+Package: refbraid
+Version: @VERSION@
+Architecture: amd64
+Maintainer: Alexey Lovchikov <9040295+alexeylovchikov@users.noreply.github.com>
+Installed-Size: @SIZE@
+Depends: git, libc6 (>= 2.35), libgcc-s1, libx11-6, libx11-xcb1, libxcursor1, libxi6, libxrandr2, libxkbcommon0, libxkbcommon-x11-0, libgl1, libegl1
+Recommends: python3-nautilus, libwayland-client0, fonts-dejavu-core
+Section: vcs
+Priority: optional
+Homepage: https://github.com/alexeylovchikov/refbraid
+Description: Git history, branches and commits in one window
+ RefBraid shows the commit graph, branches, changes and diffs of a Git
+ repository and lets you commit, push, pull, merge, rebase and more.
+ Open a folder from Files (Nautilus): right-click it, then "Open With" or
+ "Open in RefBraid".

@@ -4,7 +4,7 @@ This file provides guidance to Codex (claude.ai/code) when working with code in 
 
 ## What this is
 
-RefBraid: a standalone desktop Git client (Log with branch tree and commit graph, commit panel, diffs, push/pull, merge-conflict resolution, AI commit messages) inspired by the Git tool window of JetBrains IDEs. Rust + eframe/egui, targets Linux (RPM, AppImage) and Windows.
+RefBraid: a standalone desktop Git client (Log with branch tree and commit graph, commit panel, diffs, push/pull, merge-conflict resolution, AI commit messages) inspired by the Git tool window of JetBrains IDEs. Rust + eframe/egui, targets Linux (RPM, deb, AppImage) and Windows.
 
 All program code lives in `app/`. The repository root holds the licence (`LICENSE`, `THIRD-PARTY-NOTICES.md`), `README.md` and the CI pipeline.
 
@@ -31,8 +31,8 @@ Versioning and installers:
 ```bash
 make bump-patch | bump-minor | bump-major | set-version V=x.y.z | bump-release
 make rpm-el10         # RPM built on this machine
-make rpm-el9 rpm-el8 windows appimage   # built in podman/docker containers
-make dist             # rpm-el10 + rpm-el9 + windows + appimage, into app/dist/
+make rpm-el9 rpm-el8 deb windows appimage   # built in podman/docker containers
+make dist             # rpm-el10 + rpm-el9 + deb + windows + appimage, into app/dist/
 ```
 
 `make release-all` (`packaging/release.sh`, `BUMP=minor|major|x.y.z` for other than patch) requires a clean `app/`, raises the version, runs `Codex -p` with the `changelog` skill (`.Codex/skills/changelog/SKILL.md`) to add the new version's section to `app/CHANGELOG.md`, commits `[chore] Release version X…`, tags `vX`, then runs `make dist`; on failure before the commit it puts the version files back. `make changelog` runs only the changelog step.

@@ -7,8 +7,8 @@
 #
 #   make build / run / test   debug build, start it, run the tests
 #   make release              optimised build for this computer
-#   make rpm-el10 rpm-el9 rpm-el8 windows appimage
-#   make dist                 RHEL 10 + RHEL 9 + Windows 64 + AppImage
+#   make rpm-el10 rpm-el9 rpm-el8 deb windows appimage
+#   make dist                 RHEL 10 + RHEL 9 + Debian/Ubuntu + Windows 64 + AppImage
 #   make release-all          new patch version, changelog (Claude Code), commit, tag, then dist
 #                             (BUMP=minor|major|x.y.z for another version)
 #   make changelog            only update CHANGELOG.md for the current version
@@ -19,7 +19,7 @@ CARGO ?= $(shell command -v cargo 2>/dev/null || echo $(HOME)/.cargo/bin/cargo)
 
 .DEFAULT_GOAL := help
 .PHONY: help version bump-patch bump-minor bump-major set-version bump-release \
-	build run test release changelog rpm-el10 rpm-el9 rpm-el8 windows appimage notices dist release-all list clean
+	build run test release changelog rpm-el10 rpm-el9 rpm-el8 deb windows appimage notices dist release-all list clean
 
 help:
 	@echo "RefBraid $(VERSION) (RPM release $(RPM_RELEASE))"
@@ -39,10 +39,11 @@ help:
 	@echo "  make rpm-el10              RHEL 10 package (built on this computer)"
 	@echo "  make rpm-el9               RHEL 9 package (container)"
 	@echo "  make rpm-el8               RHEL 8 package, also installs on 9 and 10 (container)"
+	@echo "  make deb                   Debian 12+ / Ubuntu 22.04+ package (container)"
 	@echo "  make windows               Windows 64-bit MSI installer and portable zip (container)"
 	@echo "  make notices               THIRD-PARTY-NOTICES.md from the dependencies' own licence files"
 	@echo "  make appimage              AppImage for most Linux systems (container)"
-	@echo "  make dist                  rpm-el10 + rpm-el9 + windows + appimage"
+	@echo "  make dist                  rpm-el10 + rpm-el9 + deb + windows + appimage"
 	@echo "  make release-all           version +1, changelog, commit, tag v<version>, then dist"
 	@echo "                            (make release-all BUMP=minor | major | x.y.z)"
 	@echo "  make changelog             update CHANGELOG.md for the current version (Claude Code)"
@@ -88,6 +89,9 @@ rpm-el9:
 rpm-el8:
 	sh packaging/build-rpm.sh
 
+deb:
+	sh packaging/build-deb.sh
+
 windows:
 	sh packaging/build-windows.sh
 
@@ -98,7 +102,7 @@ notices:
 appimage:
 	sh packaging/build-appimage.sh
 
-dist: rpm-el10 rpm-el9 windows appimage
+dist: rpm-el10 rpm-el9 deb windows appimage
 	@$(MAKE) --no-print-directory list
 
 # A new make run, so the builds see the new version.
