@@ -171,6 +171,7 @@ pub fn setup(ctx: &egui::Context) {
         "/usr/share/fonts/dejavu-sans-fonts/DejaVuSans.ttf",
         "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
         "C:/Windows/Fonts/segoeui.ttf",
+        "/System/Library/Fonts/SFNS.ttf",
     ]) {
         fonts
             .font_data
@@ -185,6 +186,8 @@ pub fn setup(ctx: &egui::Context) {
         "/usr/share/fonts/dejavu-sans-fonts/DejaVuSans.ttf",
         "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
         "C:/Windows/Fonts/seguisym.ttf",
+        "/System/Library/Fonts/Apple Symbols.ttf",
+        "/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
     ]) {
         fonts
             .font_data
@@ -205,6 +208,8 @@ pub fn setup(ctx: &egui::Context) {
         "/usr/share/fonts/dejavu-sans-mono-fonts/DejaVuSansMono.ttf",
         "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf",
         "C:/Windows/Fonts/consola.ttf",
+        "/System/Library/Fonts/Menlo.ttc",
+        "/System/Library/Fonts/Monaco.ttf",
     ]) {
         fonts
             .font_data
