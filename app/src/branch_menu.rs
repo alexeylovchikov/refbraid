@@ -275,7 +275,7 @@ impl App {
 
     pub fn open_compare_file(&mut self, base: &str, head: Option<&str>, f: &ChangedFile) {
         let Some(repo) = self.repo.as_ref() else { return };
-        let mut args = vec!["diff", "--no-ext-diff", "-M", "--unified=100000"];
+        let mut args = vec!["diff", "--no-ext-diff", "--submodule=short", "-M", "--unified=100000"];
         args.extend(git::ws_flag(git::diff_ws()));
         args.push(base);
         if let Some(h) = head {
@@ -287,6 +287,17 @@ impl App {
         }
         args.push(&f.path);
         let diff = git::parse_diff(&git::run(&repo.path, &args).stdout);
+        let diff = crate::submodule::replace_diff(&repo.path, &f.path, &diff).unwrap_or(diff);
+        let diff = {
+            use crate::lfs::Side;
+            let old = f.old_path.as_deref().unwrap_or(&f.path);
+            let after = match head {
+                Some(h) => Side::Rev(h, &f.path),
+                None if repo.path.join(&f.path).is_file() => Side::File(&f.path),
+                None => Side::Nothing,
+            };
+            crate::lfs::replace_diff(&repo.path, &f.path, &diff, Side::Rev(base, old), after).unwrap_or(diff)
+        };
         let other = head.unwrap_or("Working Tree");
         self.push_diff(file_name(&f.path), format!("{}  ·  {base} vs {other}", f.path), diff);
     }

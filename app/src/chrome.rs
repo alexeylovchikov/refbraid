@@ -475,6 +475,11 @@ impl App {
         if ui.button(tr("Clean…")).on_hover_text(tr("Delete the files that are not in Git (git clean); the list is shown first")).clicked() {
             self.open_clean();
         }
+        ui.add_enabled_ui(open, |ui| ui.menu_button(tr("LFS"), |ui| self.lfs_menu(ui)));
+        if self.repo.as_ref().is_some_and(|r| !r.submodules.is_empty()) && ui.button(tr("Update Submodules")).on_hover_text(tr("Check out the recorded commit in every submodule, fetching the ones that are not there yet (git submodule update --init --recursive)")).clicked() {
+            self.confirm_submodule_update(None);
+            ui.close();
+        }
         ui.separator();
         if ui.add_enabled(self.repo.is_some(), egui::Button::new(tr("Git Config…"))).on_hover_text(tr("Remotes, user name and email, and other git settings")).clicked() {
             self.open_git_config();

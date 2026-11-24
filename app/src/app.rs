@@ -196,7 +196,17 @@ pub struct Repo {
     /// read before until this arrives.
     pub log_pending: Option<Receiver<LogData>>,
     /// The changed (and ignored) files being read on another thread.
-    pub status_pending: Option<Receiver<(Vec<StatusEntry>, Vec<String>, HashSet<String>)>>,
+    pub status_pending: Option<Receiver<StatusData>>,
+    /// The submodules of the repository and the state of each (read with the changed files).
+    pub submodules: Vec<crate::submodule::Submodule>,
+    /// Submodules taken out of the checked files by the program itself (only changes inside).
+    pub auto_unchecked: HashSet<String>,
+    /// Changed files that are kept in Git LFS.
+    pub lfs_paths: HashSet<String>,
+    /// The repository uses Git LFS at all (read with the changed files).
+    pub lfs_in_use: bool,
+    /// Which files of the commit shown in the details are kept in LFS: (what was asked, the answer).
+    pub details_lfs: (u64, HashSet<String>),
     /// Changed files whose lines differ only by their endings (CRLF against LF).
     pub eol_only: HashSet<String>,
     /// File history of these lines only (Show History for Selection), 1-based, inclusive.
@@ -365,6 +375,11 @@ impl Repo {
             deep: 0,
             log_pending: None,
             status_pending: None,
+            submodules: vec![],
+            lfs_paths: HashSet::new(),
+            auto_unchecked: HashSet::new(),
+            lfs_in_use: false,
+            details_lfs: (0, HashSet::new()),
             eol_only: HashSet::new(),
             line_range: None,
             history_all: false,
@@ -393,6 +408,44 @@ pub struct JobDone {
     pub snaps: Option<(crate::undo::Snapshot, crate::undo::Snapshot)>,
     pub log: Vec<(String, String, bool)>,
     pub then: Then,
+}
+
+/// What is read together with the changed files, on another thread.
+pub struct StatusData {
+    pub status: Vec<StatusEntry>,
+    pub ignored: Vec<String>,
+    pub eol: HashSet<String>,
+    pub submodules: Vec<crate::submodule::Submodule>,
+    pub lfs: HashSet<String>,
+    pub lfs_in_use: bool,
+}
+
+impl StatusData {
+    fn put_into(self, repo: &mut Repo) {
+        repo.status = self.status;
+        repo.ignored = self.ignored;
+        repo.eol_only = self.eol;
+        // A submodule with changes inside but the recorded commit checked out has nothing
+        // this repository could commit: it is never among the checked files.
+        let inner: HashSet<String> = self
+            .submodules
+            .iter()
+            .filter(|m| !m.pointer_moved() && m.state != crate::submodule::State::Conflict)
+            .filter(|m| repo.status.iter().any(|e| e.path == m.path && e.x == ' '))
+            .map(|m| m.path.clone())
+            .collect();
+        // Once its pointer moves (a commit made inside it) there is something to commit again.
+        for p in repo.auto_unchecked.difference(&inner) {
+            repo.unchecked.remove(p);
+        }
+        for p in inner.difference(&repo.auto_unchecked) {
+            repo.unchecked.insert(p.clone());
+        }
+        repo.auto_unchecked = inner;
+        repo.submodules = self.submodules;
+        repo.lfs_paths = self.lfs;
+        repo.lfs_in_use = self.lfs_in_use;
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -823,6 +876,8 @@ pub struct App {
     /// Screenshot helper: show the Changes view's AI Tasks menu.
     pub show_ai_tasks: bool,
     pub worktree: Option<crate::branch_menu::WorktreeForm>,
+    /// The window with the patterns of files kept in Git LFS.
+    pub lfs_form: Option<crate::lfs_view::LfsForm>,
     /// Open merge editors (one per conflicted file).
     pub merges: Vec<crate::merge::MergeDoc>,
     /// Annotate tabs.
@@ -948,6 +1003,7 @@ impl App {
             split: None,
             show_ai_tasks: false,
             worktree: None,
+            lfs_form: None,
             merges: vec![],
             history_diff: None,
             diff_annotate: false,
@@ -1097,7 +1153,21 @@ impl App {
                         app.show_favorites = true;
                     }
                 }
+                // A repository with submodules: the section in the tree and a moved pointer's diff.
+                // ("nestedpointer": the Changes list and the diff of a moved pointer.)
+                if view.contains("nestedrepos") || view.contains("nestedpointer") {
+                    if let Some(dir) = crate::demo::submodule_example() {
+                        app.open(&dir);
+                        if view.contains("nestedpointer") {
+                            app.show_commit = true;
+                            app.open_worktree_diff("libs/charts");
+                        }
+                    }
+                }
                 // The command palette with something typed; the list of branches to check out.
+                if view.contains("bigfiles") {
+                    app.lfs_form = Some(crate::lfs_view::LfsForm { patterns: vec!["*.psd".into(), "*.mp4".into(), "assets/textures/**".into()], new: String::new() });
+                }
                 if view.contains("findaction") {
                     app.dialog = Some(Dialog::Palette { query: "bra".into(), at: 1, branches: false });
                 }
@@ -1645,6 +1715,7 @@ impl App {
         self.push_form = None;
         self.split = None;
         self.worktree = None;
+        self.lfs_form = None;
         self.git_config = None;
         if w.repo.is_some() {
             self.parked.push(w);
@@ -1739,6 +1810,7 @@ impl App {
             self.push_form = None;
             self.split = None;
             self.worktree = None;
+            self.lfs_form = None;
             self.git_config = None;
             match self.tab_order.get(at.min(self.tab_order.len().saturating_sub(1))).cloned() {
                 Some(next) => self.open(&next),
@@ -1896,15 +1968,18 @@ impl App {
             let status = git::status(&path);
             // Worth a look only when something tracked is changed.
             let eol = if status.iter().any(|e| !e.is_untracked()) { git::eol_only(&path) } else { HashSet::new() };
-            let _ = tx.send((status, ignored, eol));
+            let submodules = crate::submodule::read(&path);
+            let lfs_in_use = crate::lfs::in_use(&path);
+            let lfs = if lfs_in_use { crate::lfs::tracked(&path, &status.iter().map(|e| e.path.clone()).collect::<Vec<_>>()) } else { HashSet::new() };
+            let _ = tx.send(StatusData { status, ignored, eol, submodules, lfs, lfs_in_use });
             if let Some(ctx) = REPAINT.get() {
                 ctx.request_repaint();
             }
         });
         match recv_within(&rx, wait) {
-            Some((status, ignored, eol)) => {
+            Some(d) => {
                 repo.status_pending = None;
-                (repo.status, repo.ignored, repo.eol_only) = (status, ignored, eol);
+                d.put_into(repo);
             }
             // An earlier load still on its way is dropped with its receiver.
             None => repo.status_pending = Some(rx),
@@ -1915,9 +1990,9 @@ impl App {
     pub fn take_pending_status(repo: &mut Repo) -> bool {
         let Some(rx) = repo.status_pending.as_ref() else { return false };
         match rx.try_recv() {
-            Ok((status, ignored, eol)) => {
+            Ok(d) => {
                 repo.status_pending = None;
-                (repo.status, repo.ignored, repo.eol_only) = (status, ignored, eol);
+                d.put_into(repo);
                 true
             }
             Err(std::sync::mpsc::TryRecvError::Disconnected) => {
@@ -2614,6 +2689,8 @@ impl App {
 
     pub fn poll_jobs(&mut self) {
         let mut any = false;
+        // A job of the open repository that worked and was not about submodules itself.
+        let mut moved_refs = false;
         // What the running commands have printed since the last frame.
         let live: Vec<(u64, Vec<git::LiveCmd>)> = self.live_jobs.iter().map(|j| (j.id, j.live.cmds())).collect();
         for (id, cmds) in &live {
@@ -2714,6 +2791,9 @@ impl App {
                 ok: done.ok,
                 at: Instant::now(),
             });
+            if done.ok && done.snaps.is_some() && !done.cmds.iter().any(|c| c.iter().any(|a| a == "submodule")) {
+                moved_refs = true;
+            }
             if done.ok {
                 match done.then {
                     Then::OpenPush => {
@@ -2745,8 +2825,44 @@ impl App {
             }
         }
         if any {
+            let before = self.repo.as_ref().map(|r| r.submodules.clone()).unwrap_or_default();
             self.refresh();
+            if moved_refs && self.dialog.is_none() {
+                self.offer_submodule_update(&before);
+            }
         }
+    }
+
+    /// Which of these files of a commit are kept in Git LFS (by the attributes of the working
+    /// folder); asked from git once per list of files.
+    pub fn lfs_marks(&mut self, paths: &[String]) -> HashSet<String> {
+        use std::hash::{Hash, Hasher};
+        let Some(repo) = self.repo.as_mut().filter(|r| r.lfs_in_use) else { return HashSet::new() };
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        paths.hash(&mut h);
+        let key = h.finish() | 1;
+        if repo.details_lfs.0 != key {
+            repo.details_lfs = (key, crate::lfs::tracked(&repo.path, paths));
+        }
+        repo.details_lfs.1.clone()
+    }
+
+    /// After a pull, a checkout or a merge the repository may record other commits for its
+    /// submodules than are checked out in their folders: offer to bring them along.
+    fn offer_submodule_update(&mut self, before: &[crate::submodule::Submodule]) {
+        let Some(repo) = self.repo.as_ref() else { return };
+        let behind = crate::submodule::behind_after(before, &repo.submodules);
+        if behind.is_empty() {
+            return;
+        }
+        let list = behind.iter().take(8).map(|p| format!("  {p}")).collect::<Vec<_>>().join("\n");
+        let more = if behind.len() > 8 { format!("\n  … {}", behind.len() - 8) } else { String::new() };
+        self.dialog = Some(Dialog::Confirm {
+            title: tr("Update Submodules").into(),
+            text: format!("{}\n\n{list}{more}", tr("The repository now records other commits for these submodules than are in their folders. Update them?")),
+            ok: tr("Update").into(),
+            job: Some(Job::many("Update submodules", crate::submodule::update_args(None, true))),
+        });
     }
 
     fn clear_message(&mut self) {
@@ -2959,7 +3075,7 @@ impl App {
         let path = e.path.clone();
         // Renamed files are committed whole (their two paths make partial commits unclear).
         // And single changes are picked from the exact diff, not from one that leaves white space out.
-        let partial_ok = e.old_path.is_none() && git::diff_ws() == 0;
+        let partial_ok = e.old_path.is_none() && git::diff_ws() == 0 && !repo.submodules.iter().any(|m| m.path == e.path) && !repo.lfs_paths.contains(&e.path);
         if let Some(i) = self.push_diff_as(title, subtitle, diff, how) {
             self.diffs[i].worktree = partial_ok.then_some(path);
             self.diffs[i].from_commit = false;
@@ -3346,7 +3462,7 @@ impl App {
             Some(CompareSource::Worktree { path, .. }) => {
                 let Some(e) = repo.status.iter().find(|e| e.path == path) else { return };
                 let has_head = !repo.state.head_hash.is_empty();
-                (git::worktree_diff(&repo.path, e, has_head), (e.old_path.is_none() && git::diff_ws() == 0).then_some(path))
+                (git::worktree_diff(&repo.path, e, has_head), (e.old_path.is_none() && git::diff_ws() == 0 && !repo.submodules.iter().any(|m| m.path == e.path) && !repo.lfs_paths.contains(&e.path)).then_some(path))
             }
             Some(CompareSource::Commit { hash, parent, path, old_path }) => {
                 let f = git::ChangedFile { status: if old_path.is_some() { 'R' } else { 'M' }, path, old_path };
@@ -3677,6 +3793,7 @@ impl App {
         self.ai_windows(&ctx);
         self.settings_window(&ctx);
         self.branch_windows(&ctx);
+        self.lfs_window(&ctx);
         self.toasts(&ctx);
         self.window_edges(&ctx);
         self.screenshot_step(&ctx);

@@ -227,6 +227,67 @@ pub fn conflict_example() -> Option<PathBuf> {
     Some(dir)
 }
 
+/// A sample repository with submodules in every state, for looking at the Submodules
+/// section: one whose folder has newer commits than the repository records, one with changes
+/// of its own, and one that is not initialised. A fresh copy on each call.
+pub fn submodule_example() -> Option<PathBuf> {
+    let stamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).ok()?.as_secs();
+    let root = std::env::temp_dir().join("refbraid-demo").join(format!("submodules-{stamp}"));
+    let _ = std::fs::remove_dir_all(&root);
+    let make = |name: &str| -> Option<Builder> {
+        let dir = root.join(name);
+        std::fs::create_dir_all(&dir).ok()?;
+        let b = Builder { dir, t: stamp as i64 - 5 * 86400 };
+        if !b.git(&["init", "-q", "-b", "main"], ALEX) {
+            return None;
+        }
+        b.git(&["config", "user.name", ALEX.0], ALEX);
+        b.git(&["config", "user.email", ALEX.1], ALEX);
+        Some(b)
+    };
+    let save = |b: &mut Builder, file: &str, text: &str, msg: &str, who: (&str, &str)| {
+        b.t += 5 * 3600;
+        let _ = std::fs::create_dir_all(b.dir.join(file).parent().unwrap_or(&b.dir));
+        let _ = std::fs::write(b.dir.join(file), text);
+        b.git(&["add", "-A"], who);
+        b.git(&["commit", "-q", "-m", msg], who);
+    };
+    // The libraries the project takes in.
+    let mut charts = make("charts-lib")?;
+    save(&mut charts, "charts.py", "def bar(values):\n    return values\n", "Draw bar charts", DANA);
+    save(&mut charts, "charts.py", "def bar(values):\n    return sorted(values)\n", "Sort the bars", DANA);
+    let mut theme = make("theme-kit")?;
+    save(&mut theme, "colors.css", ":root { --accent: #2f6fde; }\n", "Add the colours", SAM);
+    let mut icons = make("icon-set")?;
+    save(&mut icons, "README.md", "# Icons\n", "Start the icon set", SAM);
+
+    let mut b = make("portal")?;
+    save(&mut b, "app.py", "import charts\n\nprint(charts.bar([3, 1, 2]))\n", "Start the portal", ALEX);
+    for (lib, path) in [("charts-lib", "libs/charts"), ("theme-kit", "libs/theme"), ("icon-set", "assets/icons")] {
+        let from = root.join(lib).display().to_string();
+        b.git(&["-c", "protocol.file.allow=always", "submodule", "add", "-q", &from, path], ALEX);
+    }
+    b.t += 5 * 3600;
+    b.git(&["commit", "-q", "-m", "Take in the chart, theme and icon libraries"], ALEX);
+    for path in ["libs/charts", "libs/theme"] {
+        let sub = Builder { dir: b.dir.join(path), t: b.t };
+        sub.git(&["config", "user.name", ALEX.0], ALEX);
+        sub.git(&["config", "user.email", ALEX.1], ALEX);
+    }
+    // Newer commits of the chart library, fetched into its folder but not recorded yet.
+    save(&mut charts, "charts.py", "def bar(values):\n    return sorted(values)\n\n\ndef pie(values):\n    return values\n", "Add pie charts", DANA);
+    save(&mut charts, "charts.py", "def bar(values):\n    return sorted(values)\n\n\ndef pie(values):\n    total = sum(values)\n    return [v / total for v in values]\n", "Give pie charts shares, not amounts", DANA);
+    save(&mut charts, "CHANGES.md", "# Changes\n\n- pie charts\n", "Write down what changed", BOT);
+    let sub = Builder { dir: b.dir.join("libs/charts"), t: b.t };
+    sub.git(&["-c", "protocol.file.allow=always", "pull", "-q", "origin", "main"], ALEX);
+    // A change inside the theme library, not committed there.
+    let _ = std::fs::write(b.dir.join("libs/theme/colors.css"), ":root { --accent: #d9482b; }\n");
+    // The icons were never fetched on this computer.
+    b.git(&["submodule", "deinit", "-q", "-f", "assets/icons"], ALEX);
+    let _ = std::fs::write(b.dir.join("app.py"), "import charts\n\nprint(charts.pie([3, 1, 2]))\n");
+    Some(b.dir)
+}
+
 #[allow(dead_code)]
 pub fn is_demo(p: &Path) -> bool {
     p.starts_with(std::env::temp_dir().join("refbraid-demo"))

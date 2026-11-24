@@ -691,6 +691,8 @@ impl App {
         }
         let unchecked = repo.unchecked.clone();
         let eol_only = repo.eol_only.clone();
+        let submodules = repo.submodules.clone();
+        let lfs_paths = repo.lfs_paths.clone();
         let root = repo.path.clone();
         let partial = repo.partial.clone();
         let selected = repo.status_selected.clone();
@@ -714,6 +716,11 @@ impl App {
         let mut open_local: Option<std::path::PathBuf> = None;
         let mut history: Option<String> = None;
         let mut annotate: Option<String> = None;
+        // A submodule's row: open it as a repository, or check out its recorded commit.
+        let mut sub_open: Option<crate::submodule::Submodule> = None;
+        let mut sub_update: Option<crate::submodule::Submodule> = None;
+        // Track with LFS: the pattern chosen.
+        let mut lfs_track: Option<String> = None;
         let mut follow: Option<String> = None;
         let mut merge: Option<(String, bool)> = None;
         let mut resolve_all = false;
@@ -893,6 +900,13 @@ impl App {
                         if eol_only.contains(&e.path) {
                             extra = format!("{extra}   {}", tr("line endings only"));
                         }
+                        if lfs_paths.contains(&e.path) {
+                            extra = format!("{extra}   LFS");
+                        }
+                        let submodule = submodules.iter().find(|m| m.path == e.path);
+                        if let Some(m) = submodule {
+                            extra = format!("{extra}   {}  {}", tr("submodule"), crate::branches_view::submodule_note(m));
+                        }
                         ui.painter().text(pos2(x + 28.0 + nw, cy), egui::Align2::LEFT_CENTER, extra.trim(), FontId::proportional(12.0), theme::TEXT_DIM());
                         if g == Group::Ignored {
                             let entry = e.clone();
@@ -955,6 +969,23 @@ impl App {
                             if ui.button(tr("Show Diff")).clicked() {
                                 diff = Some(entry.path.clone());
                             }
+                            if let Some(m) = submodule {
+                                // A folder with a repository of its own, not a file: the file
+                                // actions (history of lines, annotate, rollback) don't apply.
+                                ui.separator();
+                                if ui.button(tr("Open Submodule")).on_hover_text(tr("Open the submodule as a repository of its own")).clicked() {
+                                    sub_open = Some(m.clone());
+                                }
+                                if ui.add_enabled(m.state != crate::submodule::State::Same, egui::Button::new(tr("Update Submodule"))).on_hover_text(tr("Check out the commit the repository has recorded for it (git submodule update)")).on_disabled_hover_text(tr("The recorded commit is already checked out")).clicked() {
+                                    sub_update = Some(m.clone());
+                                }
+                                ui.separator();
+                                if ui.button(tr("Copy Path")).clicked() {
+                                    ui.ctx().copy_text(entry.path.clone());
+                                    ui.close();
+                                }
+                                return;
+                            }
                             let local = crate::chrome::repo_file(&root, &entry.path);
                             if ui.add_enabled(local.is_file(), egui::Button::new(tr("Open in Default Application"))).clicked() {
                                 open_local = Some(local.clone());
@@ -965,6 +996,16 @@ impl App {
                             crate::dialogs::compare_file_items(ui, &entry.path, !entry.is_untracked());
                             if ui.add_enabled(!entry.is_untracked() && local.is_file(), egui::Button::new(tr("Annotate"))).on_hover_text(tr("Who last changed each line of the file, and in which commit")).clicked() {
                                 annotate = Some(entry.path.clone());
+                            }
+                            if group != Group::Conflicts && !lfs_paths.contains(&entry.path) {
+                                ui.menu_button(tr("Track with LFS"), |ui| {
+                                    for pat in crate::lfs::track_choices(&entry.path) {
+                                        if ui.button(&pat).on_hover_text(tr("Keep these files in Git LFS from now on: the line is added to .gitattributes (git lfs track)")).clicked() {
+                                            lfs_track = Some(pat);
+                                            ui.close();
+                                        }
+                                    }
+                                });
                             }
                             if group == Group::Conflicts {
                                 ui.separator();
@@ -1102,6 +1143,15 @@ impl App {
         if let Some(p) = history {
             self.open_file_history(&p, None);
         }
+        if let Some(p) = lfs_track {
+            self.run_lfs("LFS track", crate::lfs::track_args(&p));
+        }
+        if let Some(m) = sub_open {
+            self.open_submodule(&m);
+        }
+        if let Some(m) = sub_update {
+            self.confirm_submodule_update(Some(&m));
+        }
         if let Some(p) = annotate {
             self.open_blame(&p, None, None);
         }
@@ -1188,6 +1238,14 @@ impl App {
         if !tracked.is_empty() {
             let mut c = vec!["restore".to_string(), "--source=HEAD".into(), "--staged".into(), "--worktree".into(), "--".into()];
             c.extend(tracked);
+            cmds.push(c);
+        }
+        // A submodule's folder is put back by checking out its recorded commit there; changes
+        // of its own inside it are left alone.
+        let subs: Vec<String> = self.repo.as_ref().map(|r| entries.iter().filter(|e| r.submodules.iter().any(|m| m.path == e.path)).map(|e| e.path.clone()).collect()).unwrap_or_default();
+        if !subs.is_empty() {
+            let mut c = vec!["submodule".to_string(), "update".into(), "--init".into(), "--".into()];
+            c.extend(subs);
             cmds.push(c);
         }
         let n = entries.len();

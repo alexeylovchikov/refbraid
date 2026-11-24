@@ -1360,7 +1360,7 @@ pub fn eol_only(dir: &Path) -> std::collections::HashSet<String> {
 
 pub fn commit_file_diff(dir: &Path, hash: &str, parent: Option<&str>, file: &ChangedFile) -> DiffText {
     let base = parent.unwrap_or(EMPTY_TREE);
-    let mut args = vec!["diff", "--no-ext-diff", "-M", "--unified=100000"];
+    let mut args = vec!["diff", "--no-ext-diff", "--submodule=short", "-M", "--unified=100000"];
     args.extend(ws_flag(diff_ws()));
     args.extend([base, hash, "--"]);
     if let Some(o) = &file.old_path {
@@ -1368,8 +1368,21 @@ pub fn commit_file_diff(dir: &Path, hash: &str, parent: Option<&str>, file: &Cha
     }
     args.push(&file.path);
     let mut d = parse_diff(&run(dir, &args).stdout);
+    if let Some(sub) = crate::submodule::replace_diff(dir, &file.path, &d) {
+        return sub;
+    }
+    let old = file.old_path.as_deref().unwrap_or(&file.path);
+    // A file kept in Git LFS: its content, not the pointer git holds in its place.
+    use crate::lfs::Side;
+    let before = match parent {
+        Some(p) if file.status != 'A' => Side::Rev(p, old),
+        _ => Side::Nothing,
+    };
+    let after = if file.status == 'D' { Side::Nothing } else { Side::Rev(hash, &file.path) };
+    if let Some(real) = crate::lfs::replace_diff(dir, &file.path, &d, before, after) {
+        return real;
+    }
     if is_image_path(&file.path) {
-        let old = file.old_path.as_deref().unwrap_or(&file.path);
         d.images = Some(ImagePair {
             path: file.path.clone(),
             before: if file.status == 'A' { None } else { parent.and_then(|p| blob(dir, p, old)).map(std::sync::Arc::new) },
@@ -1392,8 +1405,17 @@ pub fn worktree_diff_exact(dir: &Path, e: &StatusEntry, has_head: bool) -> DiffT
 
 fn worktree_diff_with(dir: &Path, e: &StatusEntry, has_head: bool, ws: Option<&str>) -> DiffText {
     let mut d = worktree_text_diff(dir, e, has_head, ws);
+    let old = e.old_path.as_deref().unwrap_or(&e.path);
+    if !e.is_untracked() {
+        // A file kept in Git LFS: its content, not the pointer git holds in its place.
+        use crate::lfs::Side;
+        let before = if !has_head || e.x == 'A' { Side::Nothing } else { Side::Rev("HEAD", old) };
+        let after = if dir.join(&e.path).is_file() { Side::File(&e.path) } else { Side::Nothing };
+        if let Some(real) = crate::lfs::replace_diff(dir, &e.path, &d, before, after) {
+            return real;
+        }
+    }
     if is_image_path(&e.path) {
-        let old = e.old_path.as_deref().unwrap_or(&e.path);
         let before = if e.is_untracked() || !has_head || e.x == 'A' { None } else { blob(dir, "HEAD", old) };
         let after = std::fs::read(dir.join(&e.path)).ok();
         d.images = Some(ImagePair { path: e.path.clone(), before: before.map(std::sync::Arc::new), after: after.map(std::sync::Arc::new) });
@@ -1407,14 +1429,15 @@ fn worktree_text_diff(dir: &Path, e: &StatusEntry, has_head: bool, ws: Option<&s
         return parse_diff(&out.stdout);
     }
     let base = if has_head { "HEAD" } else { EMPTY_TREE };
-    let mut args = vec!["diff", "--no-ext-diff", "-M", "--unified=100000"];
+    let mut args = vec!["diff", "--no-ext-diff", "--submodule=short", "-M", "--unified=100000"];
     args.extend(ws);
     args.extend([base, "--"]);
     if let Some(o) = &e.old_path {
         args.push(o);
     }
     args.push(&e.path);
-    parse_diff(&run(dir, &args).stdout)
+    let d = parse_diff(&run(dir, &args).stdout);
+    crate::submodule::replace_diff(dir, &e.path, &d).unwrap_or(d)
 }
 
 /// Cheap fingerprint of the repository metadata, used to notice outside changes.
@@ -1426,7 +1449,7 @@ pub fn fingerprint(dir: &Path) -> u64 {
         // worktree: .git file points elsewhere
         std::fs::read_to_string(&gd)
             .ok()
-            .and_then(|s| s.strip_prefix("gitdir:").map(|p| PathBuf::from(p.trim())))
+            .and_then(|s| s.strip_prefix("gitdir:").map(|p| dir.join(p.trim())))
             .unwrap_or(gd)
     } else {
         gd

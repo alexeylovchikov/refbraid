@@ -322,6 +322,7 @@ impl App {
 
         let body = Rect::from_min_max(pos2(rect.left(), bar.bottom()), rect.max);
         let mut ui = ui.new_child(egui::UiBuilder::new().max_rect(body));
+        let lfs_marks = self.lfs_marks(&sections.iter().flat_map(|s| s.files.iter().map(|f| f.path.clone())).collect::<Vec<_>>());
         let Some(repo) = self.repo.as_ref() else { return };
         let root = repo.path.clone();
         if repo.details.is_none() && !multi {
@@ -387,6 +388,10 @@ impl App {
                             name = format!("{name}  ← {o}");
                         }
                         p.text(pos2(x + 28.0, cy), egui::Align2::LEFT_CENTER, &name, font.clone(), status_color(file.status));
+                        if lfs_marks.contains(&file.path) {
+                            let w = theme::text_width(&ui, &name, &font);
+                            p.text(pos2(x + 36.0 + w, cy), egui::Align2::LEFT_CENTER, "LFS", FontId::proportional(11.5), theme::TEXT_DIM());
+                        }
                         if resp.double_clicked() {
                             open_diff = Some((*part, *idx));
                         } else if resp.clicked() {

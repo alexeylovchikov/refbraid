@@ -15,6 +15,7 @@ enum TreeRow {
     Ref { branch: Branch, label: String, depth: usize },
     /// A working folder of the repository; `current` is the one that is open.
     Worktree { wt: crate::git::Worktree, current: bool },
+    Submodule { sub: crate::submodule::Submodule },
 }
 
 /// The folder's own name, for the tree.
@@ -150,6 +151,17 @@ impl App {
                 }
             }
         }
+        // Submodules, when the repository has any.
+        let subs: Vec<&crate::submodule::Submodule> = repo.submodules.iter().filter(|m| matches(&m.path)).collect();
+        if !subs.is_empty() {
+            let o = is_open("M");
+            rows.push(TreeRow::Group { key: "M".into(), label: "Submodules".into(), depth: 0, open: o, folder: false });
+            if o {
+                for m in subs {
+                    rows.push(TreeRow::Submodule { sub: m.clone() });
+                }
+            }
+        }
         let mut tags: Vec<&Branch> = repo.state.tags.iter().filter(|t| matches(&t.name)).collect();
         if search.is_empty() || !tags.is_empty() {
             // Tags start folded, like the IDE.
@@ -207,6 +219,7 @@ impl App {
             TreeRow::Group { key, .. } => key.clone(),
             TreeRow::Ref { branch, .. } => format!("{:?}:{}", branch.kind, branch.name),
             TreeRow::Worktree { wt, .. } => format!("W:{}", wt.path.display()),
+            TreeRow::Submodule { sub } => format!("M:{}", sub.path),
         };
         // The arrow keys: up and down through the rows, left and right fold and unfold a
         // group, Enter shows the branch in the Log.
@@ -232,6 +245,7 @@ impl App {
                     TreeRow::Ref { branch, .. } if enter => self.navigate_to(&rev_of(&branch)),
                     TreeRow::Head if enter => self.navigate_to("HEAD"),
                     TreeRow::Worktree { wt, current } if enter && !current && !wt.prunable => self.open(&wt.path),
+                    TreeRow::Submodule { sub } if enter => self.open_submodule(&sub),
                     _ => {}
                 }
             }
@@ -279,6 +293,13 @@ impl App {
                             let (w, cur) = (wt.clone(), *current);
                             resp.context_menu(|ui| self.worktree_actions(ui, &w, cur));
                         }
+                        TreeRow::Submodule { sub } => {
+                            if resp.double_clicked() {
+                                self.open_submodule(sub);
+                            }
+                            let m = sub.clone();
+                            resp.context_menu(|ui| self.submodule_actions(ui, &m));
+                        }
                         TreeRow::Ref { branch, .. } => {
                             if resp.double_clicked() {
                                 if let Some(r) = self.repo.as_mut() {
@@ -312,7 +333,7 @@ impl App {
         let depth = match row {
             TreeRow::Head => 0,
             TreeRow::Group { depth, .. } | TreeRow::Ref { depth, .. } => *depth,
-            TreeRow::Worktree { .. } => 1,
+            TreeRow::Worktree { .. } | TreeRow::Submodule { .. } => 1,
         };
         let x0 = rect.left() + 18.0 + depth as f32 * 18.0;
         let cy = rect.center().y;
@@ -344,6 +365,15 @@ impl App {
                 };
                 let w = theme::paint_clipped(p, pos2(x, cy), &name, font.clone(), if wt.prunable { theme::TEXT_DIM() } else { theme::TEXT() }, (right - x).max(20.0));
                 theme::paint_clipped(p, pos2(x + w + 8.0, cy), &note, FontId::proportional(11.5), theme::TEXT_DIM(), (right - x - w - 8.0).max(0.0));
+            }
+            TreeRow::Submodule { sub } => {
+                use crate::submodule::State;
+                let off = sub.state == State::NotInit;
+                theme::paint_icon(p, Rect::from_center_size(pos2(x0 + 8.0, cy), vec2(15.0, 15.0)), Icon::Folder, if sub.state == State::Moved || sub.state == State::Conflict { theme::STAR() } else { theme::ICON() });
+                let x = x0 + 21.0;
+                let right = ui.clip_rect().right().min(rect.right()) - 8.0;
+                let w = theme::paint_clipped(p, pos2(x, cy), &sub.path, font.clone(), if off { theme::TEXT_DIM() } else { theme::TEXT() }, (right - x).max(20.0));
+                theme::paint_clipped(p, pos2(x + w + 8.0, cy), &submodule_note(sub), FontId::proportional(11.5), theme::TEXT_DIM(), (right - x - w - 8.0).max(0.0));
             }
             TreeRow::Ref { branch, label, .. } => {
                 let is_head = branch.kind == RefKind::Local && current == Some(branch.name.as_str());
@@ -443,6 +473,85 @@ impl App {
         if ui.add_enabled(stale, egui::Button::new(tr("Remove Stale Records"))).on_hover_text(tr("Forget the worktrees whose folders are gone (git worktree prune)")).clicked() {
             self.run_job(Job::one("Prune worktrees", &["worktree", "prune"]));
             ui.close();
+        }
+    }
+
+    /// Open a submodule as a repository of its own, in a tab.
+    pub fn open_submodule(&mut self, sub: &crate::submodule::Submodule) {
+        let Some(repo) = self.repo.as_ref() else { return };
+        let dir = repo.path.join(&sub.path);
+        if sub.state == crate::submodule::State::NotInit || !dir.join(".git").exists() {
+            self.dialog = Some(Dialog::Confirm {
+                title: tr("Submodule").into(),
+                text: crate::i18n::trf("'{}' is not initialised: its folder is empty. Fetch it now?", &[&sub.path]),
+                ok: tr("Init").into(),
+                job: Some(Job::many("Init submodule", crate::submodule::update_args(Some(&sub.path), false))),
+            });
+            return;
+        }
+        self.open(&dir);
+    }
+
+    /// The menu of a submodule in the tree.
+    fn submodule_actions(&mut self, ui: &mut Ui, sub: &crate::submodule::Submodule) {
+        use crate::submodule::{State, sync_args, update_args};
+        ui.set_min_width(250.0);
+        let there = sub.state != State::NotInit;
+        if ui.add_enabled(there, egui::Button::new(tr("Open"))).on_hover_text(tr("Open the submodule as a repository of its own")).clicked() {
+            self.open_submodule(sub);
+            ui.close();
+        }
+        ui.separator();
+        if !there {
+            if ui.button(tr("Init")).on_hover_text(tr("Fetch the submodule into its folder (git submodule update --init)")).clicked() {
+                self.run_job(Job::many("Init submodule", update_args(Some(&sub.path), false)));
+                ui.close();
+            }
+        } else {
+            let hint = tr("Check out the commit the repository has recorded for it (git submodule update)");
+            if ui.add_enabled(sub.state != State::Same, egui::Button::new(tr("Update"))).on_hover_text(hint).on_disabled_hover_text(tr("The recorded commit is already checked out")).clicked() {
+                self.confirm_submodule_update(Some(sub));
+                ui.close();
+            }
+        }
+        if ui.button(tr("Update with Nested Submodules")).on_hover_text(tr("Also the submodules inside it (--recursive)")).clicked() {
+            self.run_job(Job::many("Update submodule", update_args(Some(&sub.path), true)));
+            ui.close();
+        }
+        if ui.button(tr("Sync Address")).on_hover_text(tr("Take the address from .gitmodules again, after it was changed there (git submodule sync)")).clicked() {
+            self.run_job(Job::many("Sync submodule", sync_args(Some(&sub.path))));
+            ui.close();
+        }
+        ui.separator();
+        if ui.button(tr("Update All Submodules")).clicked() {
+            self.confirm_submodule_update(None);
+            ui.close();
+        }
+        ui.separator();
+        if ui.button(tr("Copy Path")).clicked() {
+            if let Some(repo) = self.repo.as_ref() {
+                ui.ctx().copy_text(crate::chrome::native_path(&repo.path.join(&sub.path)).display().to_string());
+            }
+            ui.close();
+        }
+        if ui.add_enabled(!sub.url.is_empty(), egui::Button::new(tr("Copy Address"))).clicked() {
+            ui.ctx().copy_text(sub.url.clone());
+            ui.close();
+        }
+    }
+
+    /// Update one submodule or all of them; when a commit of its own is checked out there or
+    /// files are changed, say first what the update does to them.
+    pub fn confirm_submodule_update(&mut self, one: Option<&crate::submodule::Submodule>) {
+        let Some(repo) = self.repo.as_ref() else { return };
+        let subs: Vec<&crate::submodule::Submodule> = match one {
+            Some(m) => vec![m],
+            None => repo.submodules.iter().collect(),
+        };
+        let job = Job::many(if one.is_some() { "Update submodule" } else { "Update submodules" }, crate::submodule::update_args(one.map(|m| m.path.as_str()), one.is_none()));
+        match update_warning(&subs) {
+            Some(text) => self.dialog = Some(Dialog::Confirm { title: tr("Update Submodules").into(), text, ok: tr("Update").into(), job: Some(job) }),
+            None => self.run_job(job),
         }
     }
 
@@ -690,6 +799,43 @@ impl App {
             }
         });
     }
+}
+
+/// The small text after a submodule's name in the tree: where it is against what is recorded.
+pub fn submodule_note(sub: &crate::submodule::Submodule) -> String {
+    use crate::submodule::State;
+    let short = |h: &str| crate::app::short(h).to_string();
+    let mut note = match (sub.state, &sub.actual) {
+        (State::NotInit, _) => tr("not initialised").to_string(),
+        (State::Conflict, _) => tr("conflict").to_string(),
+        (State::Moved, Some(a)) => format!("{} → {}", short(&sub.recorded), short(a)),
+        _ => short(&sub.recorded),
+    };
+    if sub.modified || sub.untracked {
+        note = format!("{note}, {}", tr("has changes"));
+    }
+    note
+}
+
+/// What to say before updating these submodules, when the update takes something away from
+/// view: a commit of its own that is checked out there, or changed files that may stop it.
+pub fn update_warning(subs: &[&crate::submodule::Submodule]) -> Option<String> {
+    let moved: Vec<&str> = subs.iter().filter(|m| m.pointer_moved()).map(|m| m.path.as_str()).collect();
+    let dirty: Vec<&str> = subs.iter().filter(|m| m.modified).map(|m| m.path.as_str()).collect();
+    if moved.is_empty() && dirty.is_empty() {
+        return None;
+    }
+    let mut text = String::new();
+    if !moved.is_empty() {
+        text.push_str(&crate::i18n::trf("Another commit than the recorded one is checked out in: {}.\nThe update checks out the recorded commit there; a commit that is on no branch of the submodule stays reachable only through its reflog.", &[&moved.join(", ")]));
+    }
+    if !dirty.is_empty() {
+        if !text.is_empty() {
+            text.push_str("\n\n");
+        }
+        text.push_str(&crate::i18n::trf("Files are changed and not committed in: {}.\nGit stops the update when it would overwrite them.", &[&dirty.join(", ")]));
+    }
+    Some(text)
 }
 
 /// What removing a worktree will do, in words, and the command for it. A worktree with
