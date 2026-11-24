@@ -1,6 +1,13 @@
 # Changelog
 
-<!-- last-commit: 7628176755f42bea36393de256362c60103828f3 -->
+<!-- last-commit: e183302e7de1ab16d7aa78bb7fbe015d1243ab32 -->
+
+## 0.5.2 — 2026-11-24
+
+### New
+- **Tokens in the password store of the system**: the tokens of JIRA and of the hostings (Settings → JIRA, Settings → Hosting) are kept in the store of the system — the keyring on Linux, the Credential Manager on Windows, the Keychain on macOS — and not in the settings file. Tokens saved by earlier versions are moved there at the first start.
+- A saved token is not shown again: the field only takes a new one in its place, and **Forget** removes the saved one. Changing the host or the JIRA address drops the saved token, so that it can't go to another server.
+- Where the system has no password store the token stays in the settings file, and the settings page says so.
 
 ## 0.5.1 — 2026-11-24
 
