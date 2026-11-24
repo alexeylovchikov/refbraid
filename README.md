@@ -20,6 +20,14 @@ Before its first public release the program was developed under the working name
 |---|---|---|
 | ![The result of CI before each commit and in the commit details](docs/ci-status.png) | ![The Create Pull Request window](docs/pull-request.png) | ![Hosts and their tokens in the settings](docs/hosting-settings.png) |
 
+| AI: a rebase plan | AI: atomic commits | AI: commit message prompt |
+|---|---|---|
+| ![Interactive Rebase with the plan an AI agent suggested and its explanation](docs/ai-rebase.png) | ![The local changes split into atomic commits by an AI agent](docs/ai-atomic-commits.png) | ![The prompt the AI agent writes commit messages by](docs/ai-commit-prompt.png) |
+
+| Reflog | Find Action | JIRA status |
+|---|---|---|
+| ![Where HEAD has been, with the commits no branch reaches](docs/reflog.png) | ![The command palette](docs/find-action.png) | ![The status of the JIRA issue in the commit details](docs/jira-status.png) |
+
 ## What it does
 
 - **Log** — commit graph, branch tree with favourites, filters by text, branch, author, date
@@ -36,6 +44,9 @@ Before its first public release the program was developed under the working name
   resolved in one click, optional help from an AI coding agent you have installed.
 - **Remotes** — fetch, pull, push with a preview of the commits, clone, credentials and SSH
   keys, sign-in errors explained in plain words.
+- **AI** — with a coding-agent CLI you have installed (Claude Code, Codex, Gemini and
+  others): commit messages by a prompt you can change, the local changes split into atomic
+  commits, a plan suggested for an interactive rebase, merge conflicts resolved.
 - **Hostings** — GitHub, GitLab and Bitbucket are recognised by the address of the remote:
   open a commit, a branch or a file on the hosting, create a pull request, see the open
   pull requests of a branch and the result of CI next to each commit (the last two need a
