@@ -15,6 +15,9 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
+  # Nobody runs a debugger on these builds: without debug information they compile and link
+  # faster and the cache of built libraries is several times smaller.
+  CARGO_PROFILE_DEV_DEBUG: 0
 
 defaults:
   run:
@@ -26,18 +29,17 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            app/target
-          key: linux-${{ hashFiles('app/Cargo.lock') }}
-          restore-keys: linux-
       - name: Toolchain
         run: rustup toolchain install stable --profile minimal && rustup default stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          workspaces: app
+          shared-key: linux
+          cache-on-failure: true
+      # Only the test build: the program on its own is built by the MinGW and Screenshots
+      # jobs, and building both here compiles the whole crate twice.
       - name: Build
-        run: cargo build --locked
+        run: cargo test --locked --no-run
       # The tests make real repositories: they need an author, and line endings left alone.
       - name: Git settings for the tests
         run: |
@@ -53,18 +55,17 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            app/target
-          key: windows-${{ hashFiles('app/Cargo.lock') }}
-          restore-keys: windows-
       - name: Toolchain
         run: rustup toolchain install stable --profile minimal && rustup default stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          workspaces: app
+          shared-key: windows
+          cache-on-failure: true
+      # Only the test build: the program on its own is built by the MinGW and Screenshots
+      # jobs, and building both here compiles the whole crate twice.
       - name: Build
-        run: cargo build --locked
+        run: cargo test --locked --no-run
       # The tests make real repositories: they need an author, and line endings left alone.
       - name: Git settings for the tests
         run: |
@@ -81,20 +82,17 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            app/target
-          key: mingw-${{ hashFiles('app/Cargo.lock') }}
-          restore-keys: mingw-
       - name: Toolchain
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq --no-install-recommends gcc-mingw-w64-x86-64
           rustup toolchain install stable --profile minimal && rustup default stable
           rustup target add x86_64-pc-windows-gnu
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          workspaces: app
+          shared-key: mingw
+          cache-on-failure: true
       - name: Build
         run: cargo build --locked --target x86_64-pc-windows-gnu
 
@@ -107,16 +105,13 @@ jobs:
     continue-on-error: true
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            app/target
-          key: clippy-${{ hashFiles('app/Cargo.lock') }}
-          restore-keys: clippy-
       - name: Toolchain
         run: rustup toolchain install stable --profile minimal --component clippy && rustup default stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          workspaces: app
+          shared-key: clippy
+          cache-on-failure: true
       - name: Clippy
         run: cargo clippy --locked --all-targets -- -D clippy::correctness -D clippy::suspicious -W clippy::perf -A clippy::style -A clippy::complexity
 
@@ -128,19 +123,17 @@ jobs:
     continue-on-error: true
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            app/target
-          key: linux-${{ hashFiles('app/Cargo.lock') }}
-          restore-keys: linux-
       - name: Tools
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq --no-install-recommends xvfb xauth libgl1 libegl1 libxkbcommon-x11-0 fonts-dejavu-core
           rustup toolchain install stable --profile minimal && rustup default stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          workspaces: app
+          shared-key: linux
+          cache-on-failure: true
+          save-if: false
       - name: Build
         run: cargo build --locked
       - name: Take the pictures
