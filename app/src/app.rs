@@ -3567,7 +3567,7 @@ impl App {
 
     /// The shortcut of an action as it is now, for menus and hints ("" when it has none).
     pub fn key_of(&self, id: &str) -> String {
-        crate::keymap::binding(&self.settings.keys, id)
+        crate::keymap::shown(&crate::keymap::binding(&self.settings.keys, id)).into_owned()
     }
 
     /// A menu line: the action's name and, after a gap, its shortcut.

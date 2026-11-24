@@ -403,7 +403,7 @@ impl App {
         }
         text.push('\n');
         for (key, what) in crate::keymap::FIXED {
-            text.push_str(&format!("{key}   {}\n", tr(what)));
+            text.push_str(&format!("{}   {}\n", crate::keymap::shown(key), tr(what)));
         }
         text.push_str(&format!("\n{}", tr("Shortcuts are changed in Settings → Keymap; every action is also in Help → Find Action.")));
         self.dialog = Some(Dialog::Message { title: tr("Keyboard shortcuts").into(), text });

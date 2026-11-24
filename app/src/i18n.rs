@@ -59,10 +59,28 @@ fn ru() -> &'static HashMap<&'static str, &'static str> {
 
 /// `text` in the interface language.
 pub fn tr(text: &str) -> &str {
-    match lang() {
+    let t = match lang() {
         Lang::En => text,
         Lang::Ru => ru().get(text).copied().unwrap_or(text),
+    };
+    if cfg!(target_os = "macos") { mac_keys(t) } else { t }
+}
+
+/// macOS: the shortcuts named in a text, written the way a Mac does (`keymap::mac_text`).
+/// Each such text is converted once and kept: there are only a few dozen of them.
+fn mac_keys(text: &str) -> &str {
+    if !text.contains("Ctrl") && !text.contains("Alt") && !text.contains("Shift+") {
+        return text;
     }
+    static DONE: std::sync::Mutex<Option<HashMap<String, &'static str>>> = std::sync::Mutex::new(None);
+    let mut done = DONE.lock().unwrap();
+    let map = done.get_or_insert_with(HashMap::new);
+    if let Some(t) = map.get(text) {
+        return t;
+    }
+    let mac: &'static str = Box::leak(crate::keymap::mac_text(text).into_boxed_str());
+    map.insert(text.to_string(), mac);
+    mac
 }
 
 /// Like [`tr`] for text with `{}` places, filled in order with `args`.

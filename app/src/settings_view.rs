@@ -739,12 +739,12 @@ impl App {
                     ui.add(egui::Label::new(RichText::new(tr(a.name).trim_end_matches('…')).color(theme::TEXT())).truncate());
                 });
                 let waiting = capturing.as_deref() == Some(a.id);
-                let text = if waiting { tr("Press the keys…").to_string() } else if now.is_empty() { "—".to_string() } else { now.clone() };
+                let text = if waiting { tr("Press the keys…").to_string() } else if now.is_empty() { "—".to_string() } else { keymap::shown(&now).into_owned() };
                 let b = ui.add_sized([150.0, 22.0], egui::Button::new(RichText::new(text).color(if waiting { theme::LINK() } else if changed { theme::STAR() } else { theme::TEXT() })).selected(waiting));
                 if b.on_hover_text(tr("Click to change the shortcut")).clicked() {
                     capturing = if waiting { None } else { Some(a.id.to_string()) };
                 }
-                if changed && ui.link(tr("Reset")).on_hover_text(if a.default.is_empty() { tr("No shortcut by default").to_string() } else { a.default.to_string() }).clicked() {
+                if changed && ui.link(tr("Reset")).on_hover_text(if a.default.is_empty() { tr("No shortcut by default").to_string() } else { keymap::shown(a.default).into_owned() }).clicked() {
                     keymap::set(&mut d.s.keys, a.id, a.default);
                 }
                 if let Some(other) = keymap::taken_by(&d.s.keys, a.id, &now) {

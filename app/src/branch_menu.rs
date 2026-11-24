@@ -36,7 +36,7 @@ fn log_range(dir: &std::path::Path, range: &str) -> Vec<(String, String)> {
 
 fn item(ui: &mut Ui, text: impl Into<String>, shortcut: &str) -> bool {
     let b = egui::Button::new(text.into());
-    let b = if shortcut.is_empty() { b } else { b.shortcut_text(RichText::new(shortcut).color(theme::TEXT_DIM())) };
+    let b = if shortcut.is_empty() { b } else { b.shortcut_text(RichText::new(crate::keymap::shown(shortcut)).color(theme::TEXT_DIM())) };
     ui.add(b).clicked()
 }
 

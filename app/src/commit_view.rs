@@ -1034,7 +1034,7 @@ impl App {
                                     job = Some(Job::many("Mark resolved", vec![a]));
                                 }
                             } else if group == Group::Unversioned {
-                                if ui.add(egui::Button::new(many("Add to Git")).shortcut_text("Ctrl+Alt+A")).clicked() {
+                                if ui.add(egui::Button::new(many("Add to Git")).shortcut_text(crate::keymap::shown("Ctrl+Alt+A"))).clicked() {
                                     let mut a = vec!["add".to_string(), "--".into()];
                                     a.extend(paths.iter().cloned());
                                     job = Some(Job::many(if n > 1 { "Add files" } else { "Add file" }, vec![a]));
@@ -2207,15 +2207,15 @@ impl App {
                         Some((*nums.iter().min()?, *nums.iter().max()?))
                     });
                     sel_resp.context_menu(|ui| {
-                        if ui.add_enabled(has_sel, egui::Button::new(tr("Copy")).shortcut_text("Ctrl+C")).clicked() {
+                        if ui.add_enabled(has_sel, egui::Button::new(tr("Copy")).shortcut_text(crate::keymap::shown("Ctrl+C"))).clicked() {
                             do_copy = true;
                             ui.close();
                         }
-                        if ui.add(egui::Button::new(tr("Select All")).shortcut_text("Ctrl+A")).clicked() {
+                        if ui.add(egui::Button::new(tr("Select All")).shortcut_text(crate::keymap::shown("Ctrl+A"))).clicked() {
                             select_all = true;
                             ui.close();
                         }
-                        if ui.add(egui::Button::new(tr("Find…")).shortcut_text("Ctrl+F")).clicked() {
+                        if ui.add(egui::Button::new(tr("Find…")).shortcut_text(crate::keymap::shown("Ctrl+F"))).clicked() {
                             find_open = true;
                             ui.close();
                         }

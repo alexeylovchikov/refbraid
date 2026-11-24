@@ -88,13 +88,21 @@ pub fn parse(text: &str) -> Option<KeyboardShortcut> {
             }
         }
     }
-    Some(KeyboardShortcut::new(mods, key?))
+    let key = key?;
+    // macOS keeps Command+Tab for switching applications: there "Ctrl+Tab" is the Control key.
+    if cfg!(target_os = "macos") && key == Key::Tab && mods.command {
+        mods = Modifiers { command: false, mac_cmd: false, ctrl: true, ..mods };
+    }
+    Some(KeyboardShortcut::new(mods, key))
 }
 
 /// A key press as shortcut text, modifiers in the order Ctrl, Alt, Shift.
 pub fn format(mods: Modifiers, key: Key) -> String {
     let mut s = String::new();
-    if mods.command || mods.ctrl || mods.mac_cmd {
+    // On a Mac the shortcuts are made with Command; its Control key is not one of ours.
+    // (Except with Tab, see `parse`.)
+    let main = if cfg!(target_os = "macos") { mods.command || mods.mac_cmd || (mods.ctrl && key == Key::Tab) } else { mods.command || mods.ctrl || mods.mac_cmd };
+    if main {
         s.push_str("Ctrl+");
     }
     if mods.alt {
@@ -105,6 +113,67 @@ pub fn format(mods: Modifiers, key: Key) -> String {
     }
     s.push_str(key.name());
     s
+}
+
+/// Text with shortcuts in it the way a Mac writes them: "Ctrl+Alt+A" becomes "⌥⌘A" (the
+/// signs of Option, Shift and Command, in the order of macOS menus, with no plus), and the
+/// keys named on their own become "Cmd" and "Option". With Tab it is the Control key, "⌃Tab":
+/// Command+Tab belongs to the system. The rest of the text is left alone.
+pub fn mac_text(text: &str) -> String {
+    const MODS: [&str; 4] = ["Ctrl+", "Alt+", "Shift+", "Cmd+"];
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    let mut in_word = false;
+    while let Some(c) = rest.chars().next() {
+        if !in_word {
+            // A run of modifier keys, then the key itself: a capital, a digit or a sign.
+            let (mut cmd, mut alt, mut shift, mut after) = (false, false, false, rest);
+            while let Some(m) = MODS.iter().find(|m| after.starts_with(**m)) {
+                match *m {
+                    "Alt+" => alt = true,
+                    "Shift+" => shift = true,
+                    _ => cmd = true,
+                }
+                after = &after[m.len()..];
+            }
+            let key = after.chars().next().is_some_and(|k| !k.is_lowercase() && !k.is_whitespace());
+            if after.len() < rest.len() && key {
+                let tab = after.starts_with("Tab");
+                for (on, sign) in [(cmd && tab, '⌃'), (alt, '⌥'), (shift, '⇧'), (cmd && !tab, '⌘')] {
+                    if on {
+                        out.push(sign);
+                    }
+                }
+                // A plus that is the key itself ("Ctrl++") is not a word.
+                rest = after;
+                in_word = false;
+                if let Some(k) = rest.chars().next() {
+                    out.push(k);
+                    rest = &rest[k.len_utf8()..];
+                    in_word = k.is_alphanumeric();
+                }
+                continue;
+            }
+            // The key named on its own: "with Ctrl", "Ctrl/Shift+click".
+            let alone = [("Ctrl", "Cmd"), ("Alt", "Option")].into_iter().find(|(w, _)| rest.starts_with(w) && !rest[w.len()..].chars().next().is_some_and(char::is_alphanumeric));
+            if let Some((word, mac)) = alone {
+                out.push_str(mac);
+                rest = &rest[word.len()..];
+                in_word = true;
+                continue;
+            }
+        }
+        out.push(c);
+        in_word = c.is_alphanumeric();
+        rest = &rest[c.len_utf8()..];
+    }
+    out
+}
+
+/// Shortcut text as this system shows it: [`mac_text`] on macOS, unchanged elsewhere. What is
+/// kept in the settings and in the table of actions is always the "Ctrl+Alt+A" form.
+pub fn shown(text: &str) -> std::borrow::Cow<'_, str> {
+    if cfg!(target_os = "macos") { std::borrow::Cow::Owned(mac_text(text)) } else { std::borrow::Cow::Borrowed(text) }
 }
 
 /// The same shortcut, however it was typed ("ctrl + k" and "Ctrl+K").
@@ -143,7 +212,7 @@ pub fn taken_by(overrides: &[(String, String)], id: &str, shortcut: &str) -> Opt
 /// be tried before Ctrl+K, which a press of it also matches.
 pub fn bound(overrides: &[(String, String)]) -> Vec<(&'static Action, KeyboardShortcut)> {
     let mut v: Vec<(&'static Action, KeyboardShortcut)> = ACTIONS.iter().filter_map(|a| parse(&binding(overrides, a.id)).map(|s| (a, s))).collect();
-    let weight = |s: &KeyboardShortcut| s.modifiers.command as u8 + s.modifiers.shift as u8 + s.modifiers.alt as u8;
+    let weight = |s: &KeyboardShortcut| (s.modifiers.command || s.modifiers.ctrl) as u8 + s.modifiers.shift as u8 + s.modifiers.alt as u8;
     v.sort_by_key(|(_, s)| std::cmp::Reverse(weight(s)));
     v
 }
@@ -172,6 +241,31 @@ mod tests {
         assert_eq!(normal("F5"), "F5");
         assert_eq!(normal("Alt+1"), "Alt+1");
         assert!(parse("Ctrl+").is_none() && parse("Ctrl+Nonsense").is_none() && parse("").is_none());
+    }
+
+    #[test]
+    fn a_mac_shows_its_own_keys() {
+        assert_eq!(mac_text("Ctrl+K"), "⌘K");
+        assert_eq!(mac_text("Ctrl+Alt+A"), "⌥⌘A");
+        assert_eq!(mac_text("Ctrl+Shift+K"), "⇧⌘K");
+        assert_eq!(mac_text("Alt+1"), "⌥1");
+        assert_eq!(mac_text("F5"), "F5");
+        assert_eq!((mac_text("Ctrl+Tab"), mac_text("Ctrl+Shift+Tab")), ("⌃Tab".to_string(), "⌃⇧Tab".to_string()));
+        assert_eq!(mac_text("Commit…    Ctrl+Enter"), "Commit…    ⌘Enter");
+        assert_eq!(mac_text("Zoom In  Ctrl++"), "Zoom In  ⌘+");
+        assert_eq!(mac_text("Ctrl+← Ctrl+→ Ctrl+Home"), "⌘← ⌘→ ⌘Home");
+        assert_eq!(mac_text("F3 / Shift+F3"), "F3 / ⇧F3");
+        assert_eq!(mac_text("Apply this commit earlier (Alt+Up)"), "Apply this commit earlier (⌥Up)");
+        // A key named on its own, and a click with a key held down.
+        assert_eq!(mac_text("Ctrl/Shift+click; Ctrl+C copies it"), "Cmd/Shift+click; ⌘C copies it");
+        assert_eq!(mac_text("Shift + those keys"), "Shift + those keys");
+        assert_eq!(mac_text("Выделение: Ctrl+A, с Alt — иначе"), "Выделение: ⌘A, с Option — иначе");
+        // Words that only contain the names are not keys.
+        assert_eq!(mac_text("Alternative, Salt+Pepper, Ctrlx"), "Alternative, Salt+Pepper, Ctrlx");
+        // Every default shortcut still reads as one.
+        for a in ACTIONS {
+            assert!(!mac_text(a.default).contains("Ctrl") && !mac_text(a.default).contains("Alt"), "{}", a.id);
+        }
     }
 
     #[test]
