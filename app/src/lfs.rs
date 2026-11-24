@@ -183,7 +183,7 @@ pub fn replace_diff(dir: &Path, path: &str, d: &DiffText, old: Side, new: Side) 
     if !says.is_empty() {
         if says.iter().any(|_| matches!(a, Got::Missing(_)) || matches!(b, Got::Missing(_))) {
             says.push(String::new());
-            says.push(tr("Git → LFS → Pull downloads the files of the current commit; Fetch, those of other branches too.").to_string());
+            says.push(tr("Git → LFS → Pull downloads the files of the current commit; Fetch All, those of earlier commits and other branches too.").to_string());
         }
         return Some(notice(&says));
     }
@@ -412,6 +412,76 @@ mod tests {
         let repo = app.repo.as_ref().unwrap();
         assert!(repo.lfs_in_use);
         assert_eq!(repo.lfs_paths, ["art/logo.psd".to_string()].into_iter().collect());
+    }
+
+    /// The whole road with the real git-lfs program and a "server" in a folder next door:
+    /// track, commit, push, a clone without the content, fetch, pull, untrack. Skipped where
+    /// git-lfs is not installed.
+    #[test]
+    fn works_with_the_real_git_lfs() {
+        if !installed() {
+            eprintln!("git-lfs is not installed: the test is skipped");
+            return;
+        }
+        let server = TestRepo::folder("lfs-server");
+        server.git(&["init", "-q", "--bare"]);
+        let url = {
+            let p = server.dir.to_string_lossy().replace('\\', "/");
+            if p.starts_with('/') { format!("file://{p}") } else { format!("file:///{p}") }
+        };
+        let r = TestRepo::new("lfs-live");
+        r.git(&["lfs", "install", "--local"]);
+        r.run(&track_args("*.bin"));
+        r.run(&track_args("docs/big notes.txt"));
+        assert_eq!(patterns(&r.dir), ["*.bin", "docs/big notes.txt"]);
+        std::fs::write(r.dir.join("model.bin"), [1u8, 0, 2]).unwrap();
+        r.write("docs/big notes.txt", "first\n");
+        r.write("plain.txt", "x\n");
+        let paths: Vec<String> = ["model.bin", "docs/big notes.txt", "plain.txt"].iter().map(|s| s.to_string()).collect();
+        assert_eq!(tracked(&r.dir, &paths), paths[..2].iter().cloned().collect());
+        let first = r.commit("One");
+        // Git holds a pointer; the content went to the LFS store.
+        let p = parse_pointer(&git::blob(&r.dir, &first, "model.bin").unwrap()).expect("a pointer in the commit");
+        assert_eq!((p.size, load(&r.dir, &p)), (3, Content::Data(vec![1, 0, 2])));
+        r.write("docs/big notes.txt", "second\n");
+        let second = r.commit("Two");
+        let d = git::commit_file_diff(&r.dir, &second, Some(&first), &file("docs/big notes.txt"));
+        assert!(d.unified.contains(&('-', "first".to_string())) && d.unified.contains(&('+', "second".to_string())), "{:?}", d.unified);
+        let branch = r.branch();
+        r.git(&["remote", "add", "origin", &url]);
+        r.git(&["push", "-q", "origin", &branch]);
+
+        // A clone that did not download the content: the files are pointers.
+        let c = TestRepo::folder("lfs-clone");
+        let out = git::run_env(&c.dir, &[("GIT_LFS_SKIP_SMUDGE", "1")], &["clone", "-q", "-b", &branch, &url, "."]);
+        assert!(out.ok, "{}", out.stderr);
+        c.identity();
+        c.git(&["lfs", "install", "--local"]);
+        let p = parse_pointer(&std::fs::read(c.dir.join("model.bin")).unwrap()).expect("a pointer in the working folder");
+        assert_eq!(load(&c.dir, &p), Content::Missing);
+        let d = git::commit_file_diff(&c.dir, &second, Some(&first), &file("docs/big notes.txt"));
+        assert!(d.unified.iter().any(|l| l.1.contains("not downloaded")), "{:?}", d.unified);
+        // Fetch brings the content of the current commit into the store and leaves the
+        // working folder alone; the earlier version of a file is still not here.
+        c.run(&fetch_args(false));
+        assert_eq!(load(&c.dir, &p), Content::Data(vec![1, 0, 2]));
+        assert!(parse_pointer(&std::fs::read(c.dir.join("model.bin")).unwrap()).is_some());
+        let d = git::commit_file_diff(&c.dir, &second, Some(&first), &file("docs/big notes.txt"));
+        assert!(d.unified.iter().any(|l| l.1.contains("The version before")) && !d.unified.iter().any(|l| l.1.contains("The version after")), "{:?}", d.unified);
+        // Fetch All brings every version: now the diff is that of the two texts.
+        c.run(&fetch_args(true));
+        let d = git::commit_file_diff(&c.dir, &second, Some(&first), &file("docs/big notes.txt"));
+        assert!(d.unified.contains(&('-', "first".to_string())) && d.unified.contains(&('+', "second".to_string())), "{:?}", d.unified);
+        // Pull puts it into the files; nothing counts as changed afterwards.
+        c.run(&pull_args());
+        assert_eq!(std::fs::read(c.dir.join("model.bin")).unwrap(), [1, 0, 2]);
+        assert_eq!(c.read("docs/big notes.txt"), "second\n");
+        assert!(c.status().is_empty(), "{:?}", c.status());
+
+        // Untrack takes the pattern out of .gitattributes.
+        c.run(&untrack_args("docs/big notes.txt"));
+        assert_eq!(patterns(&c.dir), ["*.bin"]);
+        assert_eq!(tracked(&c.dir, &paths), [paths[0].clone()].into_iter().collect());
     }
 
     #[test]

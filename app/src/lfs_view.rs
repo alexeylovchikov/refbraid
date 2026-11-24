@@ -30,7 +30,7 @@ impl App {
             self.run_lfs("LFS pull", crate::lfs::pull_args());
             ui.close();
         }
-        if ui.button(tr("Fetch")).on_hover_text(tr("Download the LFS files of the current branch without touching the working folder (git lfs fetch)")).clicked() {
+        if ui.button(tr("Fetch")).on_hover_text(tr("Download the LFS files of the current commit without touching the working folder (git lfs fetch)")).clicked() {
             self.run_lfs("LFS fetch", crate::lfs::fetch_args(false));
             ui.close();
         }
