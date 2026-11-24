@@ -478,6 +478,7 @@ impl App {
             self.open_clean();
         }
         ui.add_enabled_ui(open, |ui| ui.menu_button(tr("LFS"), |ui| self.lfs_menu(ui)));
+        self.hosting_menu_item(ui);
         if self.repo.as_ref().is_some_and(|r| !r.submodules.is_empty()) && ui.button(tr("Update Submodules")).on_hover_text(tr("Check out the recorded commit in every submodule, fetching the ones that are not there yet (git submodule update --init --recursive)")).clicked() {
             self.confirm_submodule_update(None);
             ui.close();

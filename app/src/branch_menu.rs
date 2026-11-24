@@ -156,6 +156,7 @@ impl App {
             }
             self.tab = Tab::Log;
         }
+        self.hosting_branch_items(ui, name, kind);
         if !is_current {
             ui.separator();
             let tracked_by_current = kind == RefKind::Remote && self.cur_upstream().as_deref() == Some(name);
@@ -210,6 +211,7 @@ impl App {
         }
         ui.separator();
         self.pull_items(ui, up, cur, on_branch);
+        self.hosting_branch_items(ui, up, RefKind::Remote);
         ui.separator();
         let _ = ui.add_enabled(false, egui::Button::new(tr("Delete")));
     }

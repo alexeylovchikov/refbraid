@@ -693,6 +693,7 @@ impl App {
         let eol_only = repo.eol_only.clone();
         let submodules = repo.submodules.clone();
         let lfs_paths = repo.lfs_paths.clone();
+        let host_file = self.hosting_of_changes();
         let root = repo.path.clone();
         let partial = repo.partial.clone();
         let selected = repo.status_selected.clone();
@@ -996,6 +997,9 @@ impl App {
                             crate::dialogs::compare_file_items(ui, &entry.path, !entry.is_untracked());
                             if ui.add_enabled(!entry.is_untracked() && local.is_file(), egui::Button::new(tr("Annotate"))).on_hover_text(tr("Who last changed each line of the file, and in which commit")).clicked() {
                                 annotate = Some(entry.path.clone());
+                            }
+                            if !entry.is_untracked() {
+                                crate::hosting_view::file_item(ui, &host_file, &entry.path);
                             }
                             if group != Group::Conflicts && !lfs_paths.contains(&entry.path) {
                                 ui.menu_button(tr("Track with LFS"), |ui| {

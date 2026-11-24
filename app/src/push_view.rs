@@ -2,7 +2,7 @@
 //! details on the right, "Push tags" and a Push button with Force Push in its drop-down.
 
 use crate::app::{App, Dialog, Job, Tab, file_name, format_full_date, short, status_color};
-use crate::i18n::tr;
+use crate::i18n::{tr, trf};
 use crate::form::{self, Part};
 use crate::git::{self, ChangedFile, CommitDetails};
 use crate::theme::{self, Icon};
@@ -34,6 +34,12 @@ pub struct PushForm {
     diff: Option<(usize, Tab)>,
     /// Open the diff of the first file as soon as it is known (screenshots).
     pub pending_diff: bool,
+    /// Open the Create Pull Request window after the push; what the hosting calls it (None:
+    /// nothing to offer for this branch).
+    request: bool,
+    request_word: Option<&'static str>,
+    /// The remote and the branch `request_word` was worked out for.
+    request_for: (String, String),
 }
 
 const W: f32 = 820.0;
@@ -108,6 +114,9 @@ impl App {
             tags_all: true,
             diff: None,
             pending_diff: false,
+            request: false,
+            request_word: None,
+            request_for: Default::default(),
         });
     }
 
@@ -157,6 +166,15 @@ impl App {
             f.flat = !f.flat;
         }
         let valid = !f.branch.trim().is_empty() && !f.branch.contains(char::is_whitespace);
+        let target = (f.remote.clone(), f.branch.trim().to_string());
+        if f.request_for != target {
+            // Start reading the open requests, so the one this branch may have is known by the push.
+            if let Some(site) = self.site_of(&target.0) {
+                self.hosting.info(&site, ctx);
+            }
+            f.request_word = self.request_after_push(&target.0, &target.1);
+            f.request_for = target;
+        }
         if ctrl_enter && valid {
             push = Some(false);
         }
@@ -237,7 +255,12 @@ impl App {
         }
         if let Some(force) = push {
             let args = Self::push_args(&f, force);
-            self.run_job(Job::many(if force { "Force push" } else { "Push" }, vec![args]));
+            let mut job = Job::many(if force { "Force push" } else { "Push" }, vec![args]);
+            if f.request && f.request_word.is_some() {
+                self.pending_request = Some((f.remote.clone(), f.branch.trim().to_string()));
+                job = job.then(crate::app::Then::NewRequest);
+            }
+            self.run_job(job);
             keep = false;
         }
         if keep {
@@ -483,6 +506,10 @@ impl App {
                         ui.selectable_value(&mut f.tags_all, false, tr("Current Branch")).on_hover_text(tr("git push --follow-tags: tags of the pushed commits"));
                     });
             });
+            if let Some(word) = f.request_word {
+                ui.add_space(10.0);
+                ui.checkbox(&mut f.request, trf("Create {}", &[&tr(word)])).on_hover_text(tr("After the push, open the window that creates the request for this branch"));
+            }
         });
     }
 }

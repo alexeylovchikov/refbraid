@@ -1,10 +1,8 @@
 //! JIRA: the status of the issues a commit mentions (in its message or in its branch names),
-//! read over JIRA's REST API with a token. Requests go through the `curl` program, the token is
-//! handed to it on stdin so it doesn't show up in the process list.
+//! read over JIRA's REST API with a token (`http.rs` sends the requests).
 
 use std::collections::HashMap;
-use std::io::Write;
-use std::process::{Command, Stdio};
+use crate::http::Reply;
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::time::{Duration, Instant};
 
@@ -83,82 +81,19 @@ pub fn commit_keys(message: &str, branches: &[String]) -> Vec<String> {
     out
 }
 
-fn quote(v: &str) -> String {
-    format!("\"{}\"", v.replace('\\', "\\\\").replace('"', "\\\""))
-}
-
-/// What the server answered.
-struct Reply {
-    code: u16,
-    body: String,
-    content_type: String,
-}
-
-/// Marks the line curl adds after the body with the status and the content type.
-const TRAILER: &str = "\n@@curl@@";
-
 /// GET a path of the REST API.
 fn get(cfg: &Config, path: &str) -> Result<Reply, String> {
-    let mut c = Command::new(if cfg!(windows) { "curl.exe" } else { "curl" });
-    crate::git::no_console(&mut c);
-    // --compressed: some proxies in front of JIRA send gzip whether asked or not.
-    c.args(["-sS", "--compressed", "--max-time", "20", "-K", "-", "-w"]);
-    c.arg(format!("{TRAILER}%{{http_code}} %{{content_type}}"));
-    c.arg(format!("{}{path}", cfg.url));
-    c.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
-    let mut child = c.spawn().map_err(|e| format!("could not run curl: {e}"))?;
-    let mut conf = String::from("header = \"Accept: application/json\"\n");
+    let mut req = crate::http::Request { url: format!("{}{path}", cfg.url), headers: vec!["Accept: application/json".into()], ..Default::default() };
     if cfg.email.is_empty() {
-        conf.push_str(&format!("header = {}\n", quote(&format!("Authorization: Bearer {}", cfg.token))));
+        req.headers.push(format!("Authorization: Bearer {}", cfg.token));
     } else {
-        conf.push_str(&format!("user = {}\n", quote(&format!("{}:{}", cfg.email, cfg.token))));
+        req.user = Some(format!("{}:{}", cfg.email, cfg.token));
     }
-    if let Some(mut i) = child.stdin.take() {
-        let _ = i.write_all(conf.as_bytes());
-    }
-    let out = child.wait_with_output().map_err(|e| e.to_string())?;
-    let text = String::from_utf8_lossy(&out.stdout).to_string();
-    let (body, tail) = text.rsplit_once(TRAILER).unwrap_or(("", text.as_str()));
-    let (code, content_type) = tail.trim().split_once(' ').unwrap_or((tail.trim(), ""));
-    let code: u16 = code.parse().unwrap_or(0);
-    if code == 0 {
-        let err = String::from_utf8_lossy(&out.stderr).trim().trim_start_matches("curl: ").to_string();
-        // "(6) Could not resolve host: …" → "Could not resolve host: …"
-        let err = match err.strip_prefix('(').and_then(|r| r.split_once(") ")) {
-            Some((n, rest)) if n.chars().all(|c| c.is_ascii_digit()) => rest.to_string(),
-            _ => err,
-        };
-        return Err(if err.is_empty() { "no answer from the server".into() } else { err });
-    }
-    Ok(Reply { code, body: body.to_string(), content_type: content_type.trim().to_string() })
+    crate::http::send(&req)
 }
 
-/// The JSON in an answer; when there is none, what came instead.
 fn json_of(r: &Reply) -> Result<Json, String> {
-    if let Some(j) = parse_lenient(&r.body) {
-        return Ok(j);
-    }
-    let body = r.body.trim();
-    let what = if body.is_empty() {
-        "an empty answer".to_string()
-    } else if let Some(t) = html_title(body) {
-        format!("a web page \"{t}\" instead of data")
-    } else {
-        let start: String = body.chars().take(60).map(|c| if c.is_control() { ' ' } else { c }).collect();
-        format!("\"{start}…\"")
-    };
-    let ct = if r.content_type.is_empty() { String::new() } else { format!(", {}", r.content_type) };
-    Err(format!("JIRA answered with {what} (HTTP {}{ct}) — check the server URL", r.code))
-}
-
-fn html_title(body: &str) -> Option<String> {
-    let low = body.get(..body.len().min(400)).unwrap_or(body).to_lowercase();
-    if !low.contains("<html") && !low.contains("<!doctype") {
-        return None;
-    }
-    let re = regex::Regex::new(r"(?is)<title[^>]*>(.*?)</title").ok()?;
-    let t = re.captures(body).map(|c| c[1].split_whitespace().collect::<Vec<_>>().join(" ")).filter(|t| !t.is_empty());
-    Some(t.unwrap_or_else(|| "(HTML)".into()))
+    crate::http::json_of(r, "JIRA")
 }
 
 fn http_error(code: u16, body: &str) -> String {
@@ -521,8 +456,6 @@ mod tests {
         assert_eq!(i.assignee, "");
         assert!(parse("{\"a\":1,}").is_err());
         assert_eq!(parse_lenient("\u{feff})]}',\n{\"key\":\"A-1\"}\n"), Some(Json::Obj(vec![("key".into(), Json::Str("A-1".into()))])));
-        let page = Reply { code: 200, body: "<!DOCTYPE html>\n<html><head><TITLE>\n Log in - Jira </TITLE></head></html>".into(), content_type: "text/html;charset=UTF-8".into() };
-        assert_eq!(json_of(&page).unwrap_err(), "JIRA answered with a web page \"Log in - Jira\" instead of data (HTTP 200, text/html;charset=UTF-8) — check the server URL");
         assert_eq!(http_error(401, r#"{"errorMessages":["Bad token"],"errors":{}}"#), "the token was not accepted (401): Bad token");
     }
 }

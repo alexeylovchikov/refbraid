@@ -396,6 +396,8 @@ pub struct RepoState {
     pub head_hash: String,
     pub branches: Vec<Branch>,
     pub remotes: Vec<String>,
+    /// The address each remote is fetched from, as git uses it (`insteadOf` applied).
+    pub remote_urls: Vec<(String, String)>,
     pub tags: Vec<Branch>,
     /// hash -> labels to draw next to the commit
     pub labels: HashMap<String, Vec<RefLabel>>,
@@ -511,6 +513,15 @@ fn parse_track(s: &str) -> (u32, u32) {
     (ahead, behind)
 }
 
+/// The fetch addresses in the output of `git remote -v`.
+fn remote_urls(out: &str) -> Vec<(String, String)> {
+    // "origin\tgit@host:a/b.git (fetch)"; a partial clone adds " [blob:none]" after it.
+    out.lines()
+        .filter_map(|l| l.split_once('\t'))
+        .filter_map(|(name, rest)| rest.rsplit_once(" (fetch)").map(|(url, _)| (name.trim().to_string(), url.trim().to_string())))
+        .collect()
+}
+
 pub fn load_state(dir: &Path) -> RepoState {
     let mut st = RepoState::default();
     let remotes = run(dir, &["remote"]);
@@ -520,6 +531,9 @@ pub fn load_state(dir: &Path) -> RepoState {
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
         .collect();
+    if !st.remotes.is_empty() {
+        st.remote_urls = remote_urls(&run(dir, &["remote", "-v"]).stdout);
+    }
     st.user_name = run(dir, &["config", "user.name"]).stdout.trim().to_string();
 
     let head = run(dir, &["symbolic-ref", "--quiet", "--short", "HEAD"]);
@@ -1481,6 +1495,12 @@ pub fn fingerprint(dir: &Path) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reads_the_fetch_addresses_of_the_remotes() {
+        let out = "origin\tgit@github.com:octo/site.git (fetch)\norigin\tgit@github.com:octo/site.git (push)\nup stream\thttps://gitlab.example.com/g/my repo.git (fetch) [blob:none]\nup stream\thttps://gitlab.example.com/g/my repo.git (push)\n";
+        assert_eq!(remote_urls(out), vec![("origin".to_string(), "git@github.com:octo/site.git".to_string()), ("up stream".to_string(), "https://gitlab.example.com/g/my repo.git".to_string())]);
+    }
 
     #[test]
     fn reads_progress() {

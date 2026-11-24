@@ -18,6 +18,7 @@ pub enum Page {
     MergeConflicts,
     IssueNavigation,
     Jira,
+    Hosting,
     Log,
     Git,
     BranchPrefixes,
@@ -40,6 +41,7 @@ impl Page {
             Page::MergeConflicts => "Merge Conflicts",
             Page::IssueNavigation => "Issue Navigation",
             Page::Jira => "JIRA",
+            Page::Hosting => "Hosting",
             Page::Log => "Log",
             Page::Git => "Git",
             Page::BranchPrefixes => "Branch Prefixes",
@@ -55,7 +57,7 @@ impl Page {
     fn group_en(self) -> &'static str {
         match self {
             Page::Window | Page::Keymap => "Appearance",
-            Page::IssueNavigation | Page::Jira | Page::Log | Page::Git | Page::BranchPrefixes | Page::Credentials => "Version Control",
+            Page::IssueNavigation | Page::Jira | Page::Hosting | Page::Log | Page::Git | Page::BranchPrefixes | Page::Credentials => "Version Control",
             // Everything the AI agent does: which agent, commit messages, resolving conflicts.
             Page::AiAgents | Page::Commit | Page::MergeConflicts => "AI",
             Page::ExternalTools | Page::OpenFiles | Page::FileManager => "Tools",
@@ -71,6 +73,7 @@ impl Page {
             Page::MergeConflicts => "conflict merge resolve ai prompt rules skill skills claude codex SKILL.md",
             Page::IssueNavigation => "jira issue tracker link pattern regex regular expression highlight",
             Page::Jira => "jira atlassian issue status token personal access api server cloud tracker",
+            Page::Hosting => "hosting github gitlab bitbucket pull request merge request token ci pipeline checks host",
             Page::Log => "sort topological date first parent merges commits limit history",
             Page::Git => "executable path program refresh automatic",
             Page::BranchPrefixes => "branch prefix feature release hotfix bugfix support new branch name",
@@ -82,11 +85,12 @@ impl Page {
     }
 }
 
-const PAGES: [Page; 14] = [
+const PAGES: [Page; 15] = [
     Page::Window,
     Page::Keymap,
     Page::IssueNavigation,
     Page::Jira,
+    Page::Hosting,
     Page::BranchPrefixes,
     Page::Log,
     Page::Git,
@@ -126,6 +130,9 @@ pub struct SettingsDraft {
     /// JIRA: the answer of "Test Connection", and the check still running.
     pub jira_check: Option<Result<String, String>>,
     pub jira_wait: Option<std::sync::mpsc::Receiver<Result<String, String>>>,
+    /// Hosting: the same for the host in that row.
+    pub host_check: Option<(usize, Result<String, String>)>,
+    pub host_wait: Option<(usize, std::sync::mpsc::Receiver<Result<String, String>>)>,
     pub show_token: bool,
     /// Folder typed into "Additional folders".
     pub new_skill_dir: String,
@@ -189,6 +196,8 @@ impl App {
             git_check: None,
             jira_check: None,
             jira_wait: None,
+            host_check: None,
+            host_wait: None,
             show_token: false,
             new_skill_dir: String::new(),
             skills: vec![],
@@ -240,6 +249,7 @@ impl App {
         self.skills_for = None;
         // Read the issues again with the new JIRA settings (also after a token was fixed).
         self.jira.forget();
+        self.hosting.clear();
         if let Some(k) = self.repo_key() {
             crate::details_view::set_issue_rules(&self.settings.issue_rules(&k));
         }
@@ -418,6 +428,7 @@ impl App {
                 Page::Credentials => self.page_credentials(ui),
                 Page::IssueNavigation => self.page_issues(ui),
                 Page::Jira => self.page_jira(ui),
+                Page::Hosting => self.page_hosting(ui),
                 Page::Log => self.page_log(ui),
                 Page::Commit => self.page_commit(ui),
                 Page::MergeConflicts => self.page_conflicts(ui),

@@ -155,6 +155,8 @@ pub struct Settings {
     pub jira_email: String,
     /// Show the JIRA status of issues in the commit details.
     pub jira_on: bool,
+    /// Git hostings: which program runs on a host and the token for its API.
+    pub hosting: Vec<crate::hosting::Account>,
     /// Height of the commit details panel under the changed files (0 = automatic).
     pub info_height: f32,
     /// The same in a file history tab, where the details are under the commit list.
@@ -399,6 +401,8 @@ impl Settings {
                 s.jira_token = v.to_string();
             } else if let Some(v) = line.strip_prefix("jiraemail=") {
                 s.jira_email = v.to_string();
+            } else if let Some(v) = line.strip_prefix("hosting=") {
+                s.hosting.extend(crate::hosting::Account::from_line(v));
             } else if line == "jira=1" {
                 s.jira_on = true;
             } else if let Some(v) = line.strip_prefix("infoheight=") {
@@ -597,6 +601,9 @@ impl Settings {
                 out.push_str(&format!("{k}={}\n", v.trim()));
             }
         }
+        for a in self.hosting.iter().filter(|a| !a.host.trim().is_empty()) {
+            out.push_str(&format!("hosting={}\n", a.to_line()));
+        }
         if self.info_height > 0.0 {
             out.push_str(&format!("infoheight={}\n", self.info_height.round()));
         }
@@ -655,9 +662,9 @@ impl Settings {
             out.push_str(&format!("msg={}\n", esc(m)));
         }
         let _ = std::fs::write(&f, out);
-        // The file may hold the JIRA token: readable by its owner only.
+        // The file may hold the tokens of JIRA and of the hostings: readable by its owner only.
         #[cfg(unix)]
-        if !self.jira_token.is_empty() {
+        if !self.jira_token.is_empty() || self.hosting.iter().any(|a| !a.token.is_empty()) {
             use std::os::unix::fs::PermissionsExt;
             let _ = std::fs::set_permissions(&f, std::fs::Permissions::from_mode(0o600));
         }

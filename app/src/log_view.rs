@@ -701,14 +701,16 @@ impl App {
         // and leave an empty strip at its end.
         ui.spacing_mut().item_spacing.y = 0.0;
         let mut at_end = false;
+        let site = self.hosting_tick(ui.ctx());
         let out = sa.show_rows(ui, ROW_H, n, |ui, range| {
             ui.spacing_mut().item_spacing.y = 0.0;
             let repo = self.repo.as_ref().unwrap();
+            let ci = site.as_ref().and_then(|s| self.hosting.known(s)).map(|i| &i.ci).filter(|c| !c.is_empty());
             at_end = range.end >= n;
             for vi in range.clone() {
                 let idx = repo.visible[vi];
                 let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), ROW_H), Sense::click());
-                paint_row(ui, repo, idx, rect, &resp, &range);
+                paint_row(ui, repo, idx, rect, &resp, &range, ci);
                 let arrow = if App::filtered(repo) { None } else { arrow_at(repo, idx, rect, resp.hover_pos()) };
                 if let Some(a) = arrow {
                     let tip = match a.target.and_then(|t| repo.commits.get(t)) {
@@ -927,6 +929,7 @@ impl App {
                 self.navigate_to(&ch);
             }
         }
+        self.hosting_commit_item(ui, &c.hash);
     }
 }
 
@@ -1045,7 +1048,7 @@ pub fn graph_preview(ui: &mut Ui, fixed: bool, chosen: bool) -> egui::Response {
     resp.on_hover_cursor(egui::CursorIcon::PointingHand)
 }
 
-fn paint_row(ui: &Ui, repo: &crate::app::Repo, idx: usize, rect: Rect, resp: &egui::Response, range: &std::ops::Range<usize>) {
+fn paint_row(ui: &Ui, repo: &crate::app::Repo, idx: usize, rect: Rect, resp: &egui::Response, range: &std::ops::Range<usize>, ci: Option<&std::collections::HashMap<String, crate::hosting::CiRun>>) {
     let c = &repo.commits[idx];
     let row = &repo.rows[idx];
     let filtered = App::filtered(repo);
@@ -1144,9 +1147,22 @@ fn paint_row(ui: &Ui, repo: &crate::app::Repo, idx: usize, rect: Rect, resp: &eg
             });
         }
     }
-    let job = linkified(&c.subject, 13.0, text_col, Some(subj_w - labels_w - 8.0));
+    // The result of CI before the subject: its mark, named when pointed at.
+    let mark = ci.and_then(|m| m.get(&c.hash));
+    // Room for the mark in every row once the hosting told of any, so the subjects stay in line.
+    let mark_w = if ci.is_some() { 16.0 } else { 0.0 };
+    if let Some(run) = mark {
+        let at = pos2(sx + 6.0, cy);
+        crate::hosting_view::paint_ci(&p, at, run.state);
+        if resp.hover_pos().is_some_and(|hp| Rect::from_center_size(at, vec2(16.0, rect.height())).contains(hp)) {
+            egui::Tooltip::always_open(ui.ctx().clone(), resp.layer_id, resp.id.with(("ci", idx)), egui::PopupAnchor::Pointer).show(|ui| {
+                ui.label(crate::hosting_view::ci_tip(run));
+            });
+        }
+    }
+    let job = linkified(&c.subject, 13.0, text_col, Some(subj_w - labels_w - 8.0 - mark_w));
     let g = ui.fonts_mut(|f| f.layout_job(job));
-    let gpos = pos2(sx, cy - g.size().y / 2.0);
+    let gpos = pos2(sx + mark_w, cy - g.size().y / 2.0);
     // Issue links open in the browser when clicked.
     if let Some(hp) = resp.hover_pos() {
         let in_text = Rect::from_min_size(gpos, g.size()).contains(hp);

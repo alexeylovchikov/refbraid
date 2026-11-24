@@ -458,6 +458,8 @@ pub enum Then {
     ShowCommit,
     /// Open the repository in `App::pending_open` (after a clone or `git init`).
     OpenRepo,
+    /// Open the Create Pull Request window for `App::pending_request` (after a push).
+    NewRequest,
 }
 
 pub struct Job {
@@ -863,6 +865,16 @@ pub struct App {
     pub settings_draft: Option<crate::settings_view::SettingsDraft>,
     /// JIRA issues read for the commit details.
     pub jira: crate::jira::Cache,
+    /// What the Git hostings told about the open repositories (pull requests, CI).
+    pub hosting: crate::hosting::Cache,
+    /// The Create Pull Request window.
+    pub new_request: Option<crate::hosting_view::NewRequest>,
+    /// The branch to offer a pull request for once the running push is done (`Then::NewRequest`).
+    pub pending_request: Option<(String, String)>,
+    /// A hosting to show instead of the one the remotes name (screenshots).
+    pub fake_site: Option<crate::hosting::Site>,
+    /// Whether the commit asked about last is in a branch of a remote (until the next refresh).
+    pub pushed_memo: Option<(String, bool)>,
     pub last_settings_page: Option<crate::settings_view::Page>,
     pub show_agent_setup: bool,
     pub msg_history: Vec<String>,
@@ -994,6 +1006,11 @@ impl App {
             restart_requested: false,
             settings_draft: None,
             jira: Default::default(),
+            hosting: Default::default(),
+            new_request: None,
+            pending_request: None,
+            fake_site: None,
+            pushed_memo: None,
             last_settings_page: None,
             show_agent_setup: false,
             msg_history: vec![],
@@ -1039,6 +1056,7 @@ impl App {
         };
         let _ = REPAINT.set(ctx.clone());
         if app.screenshot.is_some() {
+            app.hosting.offline = true;
             LOG_WAIT_MS.store(u64::MAX, std::sync::atomic::Ordering::Relaxed);
         }
         app.started_builtin_title_bar = app.settings.builtin_title_bar;
@@ -1242,6 +1260,17 @@ impl App {
                     if let Some(d) = app.settings_draft.as_mut() {
                         d.jira_check = Some(Ok("Connected as Alex Morgan".into()));
                     }
+                } else if view.contains("hostpage") {
+                    use crate::hosting::{Account, Kind};
+                    app.settings.hosting = vec![
+                        Account { kind: Kind::GitHub, host: "github.com".into(), token: "example-token-not-a-real-one".into(), email: String::new() },
+                        Account { kind: Kind::GitLab, host: "code.example.com".into(), token: "example-token-not-a-real-one".into(), email: String::new() },
+                        Account { kind: Kind::Bitbucket, host: "bitbucket.org".into(), token: String::new(), email: String::new() },
+                    ];
+                    app.open_settings(Some(crate::settings_view::Page::Hosting));
+                    if let Some(d) = app.settings_draft.as_mut() {
+                        d.host_check = Some((0, Ok("Connected as alex-morgan".into())));
+                    }
                 } else if view.contains("editorsettings") {
                     app.open_settings(Some(crate::settings_view::Page::OpenFiles));
                 } else if view.contains("aisettings") {
@@ -1357,6 +1386,32 @@ impl App {
                     }
                     let i = app.repo.as_ref().and_then(|r| r.visible.iter().copied().find(|&i| r.commits[i].subject.starts_with("APP-1308 [fix] Waybill")));
                     if let Some(i) = i {
+                        app.select_commit(i);
+                    }
+                }
+                if view.contains("cistatus") || view.contains("newrequest") {
+                    // A hosting as it would answer (nothing is asked over the network).
+                    use crate::hosting::{Ci, CiRun, Info, Kind, Request, Site};
+                    let site = Site { kind: Kind::GitHub, host: "github.com".into(), path: "example/webshop".into(), http: false, token: "token".into(), email: String::new() };
+                    let mut info = Info { default_branch: "main".into(), ..Default::default() };
+                    if let Some(r) = app.repo.as_ref() {
+                        let states = [Ci::Running, Ci::Passed, Ci::Failed, Ci::Passed, Ci::Passed, Ci::Cancelled, Ci::Passed];
+                        for (i, st) in r.visible.iter().take(states.len()).zip(states) {
+                            let run = CiRun { state: st, url: "https://github.com/example/webshop/actions/runs/1".into(), name: "CI".into() };
+                            info.ci.insert(r.commits[*i].hash.clone(), run);
+                        }
+                        if let Some(b) = r.current_branch().filter(|b| b.name != "main") {
+                            info.requests.push(Request { number: "42".into(), title: r.commits.iter().find(|c| c.hash == b.hash).map(|c| c.subject.clone()).unwrap_or_default(), url: "https://github.com/example/webshop/pull/42".into(), source: b.name.clone(), target: "main".into(), sha: b.hash.clone(), author: "alex-morgan".into(), draft: false });
+                        }
+                    }
+                    app.hosting.put(&site, info);
+                    app.fake_site = Some(site);
+                    if view.contains("newrequest") {
+                        let other = app.repo.as_ref().and_then(|r| r.state.branches.iter().find(|b| b.kind == RefKind::Remote && !b.name.ends_with("/HEAD") && !b.name.ends_with("/main")).map(|b| b.name.clone()));
+                        if let Some((remote, branch)) = other.as_deref().and_then(|n| n.split_once('/')) {
+                            app.open_new_request(remote, branch);
+                        }
+                    } else if let Some(i) = app.repo.as_ref().and_then(|r| r.visible.first().copied()) {
                         app.select_commit(i);
                     }
                 }
@@ -2345,6 +2400,7 @@ impl App {
     }
 
     fn refresh_within(&mut self, wait: u64) {
+        self.pushed_memo = None;
         if let Some(repo) = self.repo.as_mut() {
             Self::load_everything(repo, wait);
             if let Some(i) = repo.selected {
@@ -2791,6 +2847,10 @@ impl App {
                 ok: done.ok,
                 at: Instant::now(),
             });
+            // What was sent or brought changes what the hosting shows: read it again.
+            if done.cmds.iter().any(|c| c.iter().any(|a| matches!(a.as_str(), "push" | "fetch" | "pull"))) {
+                self.hosting.forget();
+            }
             if done.ok && done.snaps.is_some() && !done.cmds.iter().any(|c| c.iter().any(|a| a == "submodule")) {
                 moved_refs = true;
             }
@@ -2816,8 +2876,17 @@ impl App {
                             self.open(&p);
                         }
                     }
+                    Then::NewRequest => {
+                        self.refresh();
+                        self.hosting.forget();
+                        if let Some((remote, branch)) = self.pending_request.take() {
+                            self.open_new_request(&remote, &branch);
+                        }
+                    }
                     Then::Nothing => {}
                 }
+            } else if done.then == Then::NewRequest {
+                self.pending_request = None;
             } else if done.then == Then::ShowCommit {
                 self.pending_commit_msg = None;
             } else if done.then == Then::OpenRepo {
@@ -3794,6 +3863,7 @@ impl App {
         self.settings_window(&ctx);
         self.branch_windows(&ctx);
         self.lfs_window(&ctx);
+        self.new_request_window(&ctx);
         self.toasts(&ctx);
         self.window_edges(&ctx);
         self.screenshot_step(&ctx);

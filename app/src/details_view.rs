@@ -276,6 +276,7 @@ impl App {
         let file_sel = self.repo.as_ref().and_then(|r| r.details_file.map(|f| (r.details_part, f)));
         let multi = self.repo.as_ref().map(|r| r.multi.len() > 1).unwrap_or(false);
         let sections = self.detail_sections();
+        let host_file = self.hosting_of_shown_commit();
         let mut tb = ui.new_child(
             egui::UiBuilder::new()
                 .max_rect(bar.shrink2(vec2(8.0, 4.0)))
@@ -418,6 +419,7 @@ impl App {
                             if ui.button(tr("Annotate")).on_hover_text(tr("Who last changed each line of the file, and in which commit")).clicked() {
                                 annotate = Some(path.clone());
                             }
+                            crate::hosting_view::file_item(ui, &host_file, &path);
                         });
                     }
                 }
@@ -462,6 +464,9 @@ impl App {
     pub fn commit_info(&mut self, ui: &mut Ui) {
         let rect = ui.max_rect();
         theme::hline(ui, rect.top() + 0.5, rect.left(), rect.right());
+        // The pull requests and the result of CI of the commit shown.
+        let shown = self.repo.as_ref().filter(|r| r.multi.len() <= 1).and_then(|r| r.details.as_ref().map(|d| (d.hash.clone(), d.containing.clone())));
+        let hosting = shown.and_then(|(hash, containing)| self.hosting_for_commit(ui.ctx(), &hash, &containing));
         let Some(repo) = self.repo.as_ref() else { return };
         if repo.multi.len() > 1 {
             let list = repo.multi_commits.clone();
@@ -606,6 +611,9 @@ impl App {
                 }
                 if let Some((cfg, states)) = &jira {
                     jira_rows(ui, cfg, states);
+                }
+                if let Some(h) = &hosting {
+                    crate::hosting_view::commit_rows(ui, h);
                 }
             });
         });
