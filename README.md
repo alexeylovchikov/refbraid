@@ -1,10 +1,28 @@
+<div align="center">
+
+<img src="docs/icon.png" width="128" height="128" alt="The RefBraid icon">
+
 # RefBraid
 
-**A desktop client for Git**: the history with a commit graph and a branch tree, a commit
-panel, diffs, push and pull, merge-conflict resolution and more — in one window, for Linux
-and Windows. Written in Rust with [egui](https://github.com/emilk/egui); it drives the `git`
-program you already have, so everything it does is an ordinary git command you can see in
-its Console tab.
+**A desktop client for Git**: the history as a commit graph, a branch tree, diffs,
+merge conflicts, pull requests and CI — in one window.<br>
+A native program written in Rust, for Linux, Windows and macOS.
+
+[![Release](https://img.shields.io/github/v/release/alexeylovchikov/refbraid?label=release)](https://github.com/alexeylovchikov/refbraid/releases/latest)
+[![CI](https://github.com/alexeylovchikov/refbraid/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/alexeylovchikov/refbraid/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
+![Platforms: Linux, Windows, macOS](https://img.shields.io/badge/platforms-Linux%20%C2%B7%20Windows%20%C2%B7%20macOS-informational)
+![Written in Rust](https://img.shields.io/badge/written%20in-Rust-orange)
+![Status: beta](https://img.shields.io/badge/status-beta-yellow)
+
+[Download](https://github.com/alexeylovchikov/refbraid/releases/latest) · [Changelog](app/CHANGELOG.en.md) · [Roadmap](app/ROADMAP.md)
+
+</div>
+
+RefBraid shows the history with a commit graph and a branch tree, has a commit panel,
+diffs, push and pull, merge-conflict resolution and more. It is written in Rust with
+[egui](https://github.com/emilk/egui) and drives the `git` program you already have, so
+everything it does is an ordinary git command you can see in its Console tab.
 
 The name: git calls branches and tags *refs*, and the commit graph braids them together.
 Before its first public release the program was developed under the working name
