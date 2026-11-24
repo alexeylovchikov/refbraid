@@ -448,6 +448,9 @@ impl StatusData {
     }
 }
 
+/// The branch of the demo repository the `mrdemo` screenshot shows a merge request for.
+const MR_DEMO_BRANCH: &str = "origin/bugfix/APP-1220-null-check";
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Then {
     Nothing,
@@ -869,6 +872,8 @@ pub struct App {
     pub hosting: crate::hosting::Cache,
     /// Looking for a newer version of the program.
     pub update: crate::update_view::State,
+    /// The window with all the pull requests of a branch.
+    pub branch_requests: Option<crate::hosting_view::BranchRequests>,
     /// The Create Pull Request window.
     pub new_request: Option<crate::hosting_view::NewRequest>,
     /// The branch to offer a pull request for once the running push is done (`Then::NewRequest`).
@@ -1010,6 +1015,7 @@ impl App {
             jira: Default::default(),
             hosting: Default::default(),
             new_request: None,
+            branch_requests: None,
             update: Default::default(),
             pending_request: None,
             fake_site: None,
@@ -1404,7 +1410,7 @@ impl App {
                             info.ci.insert(r.commits[*i].hash.clone(), run);
                         }
                         if let Some(b) = r.current_branch().filter(|b| b.name != "main") {
-                            info.requests.push(Request { number: "42".into(), title: r.commits.iter().find(|c| c.hash == b.hash).map(|c| c.subject.clone()).unwrap_or_default(), url: "https://github.com/example/webshop/pull/42".into(), source: b.name.clone(), target: "main".into(), sha: b.hash.clone(), author: "alex-morgan".into(), draft: false });
+                            info.requests.push(Request { number: "42".into(), title: r.commits.iter().find(|c| c.hash == b.hash).map(|c| c.subject.clone()).unwrap_or_default(), url: "https://github.com/example/webshop/pull/42".into(), source: b.name.clone(), target: "main".into(), sha: b.hash.clone(), author: "alex-morgan".into(), draft: false, ..Default::default() });
                         }
                     }
                     app.hosting.put(&site, info);
@@ -1415,6 +1421,55 @@ impl App {
                             app.open_new_request(remote, branch);
                         }
                     } else if let Some(i) = app.repo.as_ref().and_then(|r| r.visible.first().copied()) {
+                        app.select_commit(i);
+                    }
+                }
+                if view.contains("mrdemo") {
+                    // GitLab as it would answer: merge requests of two branches and the pipelines
+                    // of their commits (nothing is asked over the network). The menu of the
+                    // branch with a request is opened at the end of `draw`.
+                    use crate::hosting::{Ci, CiRun, Info, Kind, Request, Site};
+                    let site = Site { kind: Kind::GitLab, host: "gitlab.example.com".into(), path: "shop/webshop".into(), http: false, token: "token".into(), email: String::new() };
+                    let web = "https://gitlab.example.com/shop/webshop/-";
+                    let mut info = Info { default_branch: "main".into(), ..Default::default() };
+                    let mut shown = None;
+                    if let Some(r) = app.repo.as_ref() {
+                        let states = [Ci::Passed, Ci::Running, Ci::Failed, Ci::Passed, Ci::Passed];
+                        for (n, (i, st)) in r.visible.iter().take(states.len()).zip(states).enumerate() {
+                            info.ci.insert(r.commits[*i].hash.clone(), CiRun { state: st, url: format!("{web}/pipelines/{}", 911 - n), name: String::new() });
+                        }
+                        let tip = |name: &str| r.state.branches.iter().find(|b| b.kind == RefKind::Remote && b.name == name).map(|b| b.hash.clone());
+                        let subject = |hash: &str| r.commits.iter().find(|c| c.hash == hash).map(|c| c.subject.clone()).unwrap_or_default();
+                        if let Some(h) = tip(MR_DEMO_BRANCH) {
+                            info.requests.push(Request { number: "128".into(), title: subject(&h), url: format!("{web}/merge_requests/128"), source: MR_DEMO_BRANCH.trim_start_matches("origin/").into(), target: "main".into(), sha: h.clone(), author: "sam.patel".into(), draft: false, ..Default::default() });
+                            shown = r.index.get(&h).copied();
+                        }
+                        if let Some(h) = tip("origin/stage") {
+                            info.requests.push(Request { number: "131".into(), title: "Release candidate from stage".into(), url: format!("{web}/merge_requests/131"), source: "stage".into(), target: "master".into(), sha: h, author: "alex.morgan".into(), draft: true, ..Default::default() });
+                        }
+                    }
+                    app.hosting.put(&site, info);
+                    if view.contains("mrlist") {
+                        // Every request there was out of the branch, as the window lists them.
+                        use crate::hosting::Fate;
+                        let day = |d: i64| chrono::Local::now().timestamp() - d * 86400;
+                        let branch = MR_DEMO_BRANCH.trim_start_matches("origin/");
+                        let mut list: Vec<Request> = [
+                            ("128", "APP-1220 [fix] Null check in the paid form", "main", "sam.patel", Fate::Open, false, 0),
+                            ("131", "APP-1220 Port the null check to the release branch", "master", "sam.patel", Fate::Open, true, 1),
+                            ("119", "APP-1220 [fix] Null check, first attempt", "main", "sam.patel", Fate::Closed, false, 9),
+                            ("122", "APP-1220 [fix] Guard the paid form against an empty order", "stage", "sam.patel", Fate::Merged, false, 4),
+                            ("97", "APP-1188 [feat] Paid form: totals by currency", "main", "dana.lee", Fate::Merged, false, 31),
+                            ("84", "APP-1150 [fix] Paid form keeps the chosen period", "main", "alex.morgan", Fate::Merged, false, 58),
+                        ]
+                        .into_iter()
+                        .map(|(n, title, target, who, fate, draft, days)| Request { number: n.into(), title: title.into(), url: format!("{web}/merge_requests/{n}"), source: branch.into(), target: target.into(), author: who.into(), fate, draft, when: day(days), ..Default::default() })
+                        .collect();
+                        crate::hosting::sort_requests(&mut list);
+                        app.branch_requests = Some(crate::hosting_view::BranchRequests { site: site.clone(), branch: branch.into(), wait: None, list: Some(Ok(list)) });
+                    }
+                    app.fake_site = Some(site);
+                    if let Some(i) = shown {
                         app.select_commit(i);
                     }
                 }
@@ -3800,14 +3855,17 @@ impl App {
         // Screenshot helper: show the current branch's menu (REFBRAID_VIEW=branchmenu).
         if self.screenshot.is_some() && std::env::var("REFBRAID_VIEW").map(|v| v.contains("branchmenu")).unwrap_or(false) {
             let cur = self.repo.as_ref().and_then(|r| r.state.head_branch.clone());
-            if let Some(name) = cur.clone() {
+            // With `mrdemo`: the menu of the remote branch that has a merge request.
+            let other = std::env::var("REFBRAID_VIEW").is_ok_and(|v| v.contains("mrdemo"));
+            let shown = if other { Some((MR_DEMO_BRANCH.to_string(), crate::git::RefKind::Remote)) } else { cur.clone().map(|n| (n, crate::git::RefKind::Local)) };
+            if let Some((name, kind)) = shown {
                 egui::Area::new(egui::Id::unique("demo_branch_menu"))
                     .order(egui::Order::Foreground)
                     .fixed_pos(egui::pos2(230.0, 160.0))
                     .show(&ctx, |ui| {
                         egui::Frame::menu(ui.style()).show(ui, |ui| {
                             egui::containers::menu::menu_style(ui.style_mut());
-                            self.branch_actions(ui, &name, crate::git::RefKind::Local, cur.as_deref());
+                            self.branch_actions(ui, &name, kind, cur.as_deref());
                         });
                     });
             }
@@ -3882,6 +3940,7 @@ impl App {
         self.branch_windows(&ctx);
         self.lfs_window(&ctx);
         self.new_request_window(&ctx);
+        self.branch_requests_window(&ctx);
         self.update_window(&ctx);
         self.toasts(&ctx);
         self.window_edges(&ctx);

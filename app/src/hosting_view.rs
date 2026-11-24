@@ -4,7 +4,7 @@
 
 use crate::app::App;
 use crate::git::{self, RefKind};
-use crate::hosting::{Account, Ci, CiRun, Info, KINDS, Kind, Request, Site};
+use crate::hosting::{Account, Ci, CiRun, Fate, Info, KINDS, Kind, Request, Site};
 use crate::i18n::{tr, trf};
 use crate::theme;
 use eframe::egui::{self, Color32, RichText, Stroke, Ui, pos2, vec2};
@@ -25,6 +25,25 @@ pub struct NewRequest {
     pub wait: Option<Receiver<Result<Request, String>>>,
     pub error: Option<String>,
     pub made: Option<Request>,
+}
+
+/// The window with every request there was out of a branch.
+pub struct BranchRequests {
+    pub site: Site,
+    pub branch: String,
+    pub wait: Option<Receiver<Result<Vec<Request>, String>>>,
+    pub list: Option<Result<Vec<Request>, String>>,
+}
+
+/// The word and the colour of what became of a request.
+fn fate_badge(r: &Request) -> (&'static str, Color32) {
+    match r.fate {
+        Fate::Open if r.draft => (tr("Draft"), theme::TEXT_DIM()),
+        // "Open" is the verb of a button elsewhere, with another translation.
+        Fate::Open => (tr("Opened"), theme::GREEN()),
+        Fate::Closed => (tr("Closed"), theme::RED()),
+        Fate::Merged => (tr("Merged"), theme::rgb(0xa8, 0x8b, 0xe8)),
+    }
 }
 
 /// What the hosting says about one commit.
@@ -228,6 +247,120 @@ impl App {
         if requests.is_empty() && !is_default && ui.button(format!("{}…", trf("Create {}", &[&tr(site.kind.request())]))).clicked() {
             self.open_new_request(&remote, &branch);
             ui.close();
+        }
+        let all = format!("{}…", trf("{} of the Branch", &[&tr(site.kind.requests())]));
+        if ui
+            .add_enabled(site.connected(), egui::Button::new(all))
+            .on_hover_text(tr("Every request there was out of this branch: the ones not merged first, then the merged ones, the latest first"))
+            .on_disabled_hover_text(tr("Needs a token for this host in Settings → Hosting"))
+            .clicked()
+        {
+            self.open_branch_requests(ui.ctx(), site.clone(), &branch);
+            ui.close();
+        }
+    }
+
+    /// Open the window with all the requests of a branch and start reading them.
+    pub fn open_branch_requests(&mut self, ctx: &egui::Context, site: Site, branch: &str) {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let (s, b, c) = (site.clone(), branch.to_string(), ctx.clone());
+        std::thread::spawn(move || {
+            let _ = tx.send(crate::hosting::branch_requests(&s, &b));
+            c.request_repaint();
+        });
+        self.branch_requests = Some(BranchRequests { site, branch: branch.to_string(), wait: Some(rx), list: None });
+    }
+
+    pub fn branch_requests_window(&mut self, ctx: &egui::Context) {
+        let Some(mut f) = self.branch_requests.take() else { return };
+        if let Some(r) = f.wait.as_ref().and_then(|rx| rx.try_recv().ok()) {
+            f.list = Some(r);
+            f.wait = None;
+        }
+        let mut keep = true;
+        let mut again = false;
+        let title = format!("{}: {}", tr(f.site.kind.requests()), f.branch);
+        let closed = crate::form::show_titled(ctx, "branchrequests", "branchrequests", &title, 780.0, true, |ui, part| {
+            if part == crate::form::Part::Footer {
+                if crate::form::button(ui, tr("Close")) {
+                    keep = false;
+                }
+                if ui.add_enabled(f.wait.is_none(), egui::Button::new(tr("Refresh"))).clicked() {
+                    again = true;
+                }
+                return;
+            }
+            let list = match &f.list {
+                None => {
+                    ui.horizontal(|ui| {
+                        ui.spinner();
+                        ui.label(RichText::new(trf("Reading from {}…", &[&f.site.kind.name()])).color(theme::TEXT_MID()));
+                    });
+                    return;
+                }
+                Some(Err(e)) => {
+                    ui.add(egui::Label::new(RichText::new(format!("{}: {e}", f.site.kind.name())).color(theme::RED())).wrap());
+                    return;
+                }
+                Some(Ok(list)) => list,
+            };
+            if list.is_empty() {
+                ui.label(RichText::new(trf("There were no requests out of '{}'.", &[&f.branch])).color(theme::TEXT_DIM()));
+                return;
+            }
+            let (open, merged) = (list.iter().filter(|r| r.fate != Fate::Merged).count(), list.iter().filter(|r| r.fate == Fate::Merged).count());
+            ui.label(RichText::new(trf("Not merged: {} · merged: {}", &[&open, &merged])).color(theme::TEXT_MID()).size(12.0));
+            ui.add_space(6.0);
+            egui::ScrollArea::vertical().max_height(320.0 + crate::form::grow(ui)).auto_shrink([false, true]).show(ui, |ui| {
+                ui.set_max_width(ui.available_width() - 14.0);
+                for (n, r) in list.iter().enumerate() {
+                    let (word, col) = fate_badge(r);
+                    let row = ui.horizontal(|ui| {
+                        ui.set_min_height(26.0);
+                        ui.spacing_mut().item_spacing.x = 10.0;
+                        // The state and the number in columns of their own; the title takes what is left.
+                        ui.allocate_ui_with_layout(vec2(62.0, 20.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                            ui.set_min_width(62.0);
+                            ui.label(RichText::new(word).color(col).size(12.0).strong());
+                        });
+                        ui.allocate_ui_with_layout(vec2(48.0, 20.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                            ui.set_min_width(48.0);
+                            ui.add(egui::Hyperlink::from_label_and_url(RichText::new(format!("{}{}", f.site.kind.sign(), r.number)).color(theme::LINK()), &r.url)).on_hover_text(&r.url);
+                        });
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            let date = if r.when > 0 { crate::app::format_date(r.when) } else { String::new() };
+                            let what = if r.fate == Fate::Merged { tr("merged") } else { tr("changed") };
+                            ui.allocate_ui_with_layout(vec2(118.0, 20.0), egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                ui.set_min_width(118.0);
+                                ui.label(RichText::new(date).color(theme::TEXT_MID()).size(12.0)).on_hover_text(format!("{what} {}", if r.when > 0 { crate::app::format_full_date(r.when) } else { "—".into() }));
+                            });
+                            ui.allocate_ui_with_layout(vec2(96.0, 20.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                                ui.set_min_width(96.0);
+                                ui.add(egui::Label::new(RichText::new(&r.author).color(theme::TEXT_DIM()).size(12.0)).truncate());
+                            });
+                            ui.allocate_ui_with_layout(vec2(96.0, 20.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                                ui.set_min_width(96.0);
+                                ui.add(egui::Label::new(RichText::new(format!("→ {}", r.target)).color(theme::TEXT_MID()).size(12.0)).truncate()).on_hover_text(&r.target);
+                            });
+                            ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                                ui.add(egui::Label::new(RichText::new(&r.title).color(theme::TEXT())).truncate()).on_hover_text(&r.title);
+                            });
+                        });
+                    });
+                    // A line between the ones not merged and the merged ones.
+                    if r.fate != Fate::Merged && list.get(n + 1).is_some_and(|x| x.fate == Fate::Merged) {
+                        let y = row.response.rect.bottom() + 3.0;
+                        theme::hline(ui, y, row.response.rect.left(), ui.max_rect().right());
+                        ui.add_space(6.0);
+                    }
+                }
+            });
+        });
+        if again {
+            let (site, branch) = (f.site.clone(), f.branch.clone());
+            self.open_branch_requests(ctx, site, &branch);
+        } else if keep && !closed {
+            self.branch_requests = Some(f);
         }
     }
 

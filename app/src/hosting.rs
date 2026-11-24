@@ -42,6 +42,9 @@ impl Kind {
     pub fn request(self) -> &'static str {
         if self == Kind::GitLab { "Merge Request" } else { "Pull Request" }
     }
+    pub fn requests(self) -> &'static str {
+        if self == Kind::GitLab { "Merge Requests" } else { "Pull Requests" }
+    }
     /// The sign before the number of a request.
     pub fn sign(self) -> &'static str {
         if self == Kind::GitLab { "!" } else { "#" }
@@ -255,7 +258,17 @@ impl Site {
     }
 }
 
-/// A pull request (merge request) that is open.
+/// What became of a pull request.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum Fate {
+    #[default]
+    Open,
+    /// Closed without merging (declined, superseded).
+    Closed,
+    Merged,
+}
+
+/// A pull request (merge request).
 #[derive(Clone, PartialEq, Debug, Default)]
 pub struct Request {
     /// "12"
@@ -268,6 +281,10 @@ pub struct Request {
     pub sha: String,
     pub author: String,
     pub draft: bool,
+    pub fate: Fate,
+    /// When it was merged; of one not merged, when it was last changed (seconds since 1970,
+    /// 0 when the hosting did not say).
+    pub when: i64,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -376,9 +393,26 @@ fn default_branch_from(kind: Kind, j: &Json) -> String {
     }
 }
 
+/// The first of these times the hosting gave ("2026-11-20T10:11:12Z"), in seconds since 1970.
+fn time_of(texts: &[String]) -> i64 {
+    texts.iter().find_map(|t| chrono::DateTime::parse_from_rfc3339(t.trim()).ok()).map_or(0, |t| t.timestamp())
+}
+
+/// The order of the list of a branch: the ones not merged first, then the merged ones; in
+/// each part the latest first.
+pub fn sort_requests(list: &mut [Request]) {
+    list.sort_by(|a, b| (a.fate == Fate::Merged).cmp(&(b.fate == Fate::Merged)).then(b.when.cmp(&a.when)).then(b.number.len().cmp(&a.number.len())).then(b.number.cmp(&a.number)));
+}
+
 fn request_from(kind: Kind, j: &Json) -> Request {
     match kind {
-        Kind::GitHub => Request {
+        Kind::GitHub => {
+            let merged = !text(j, &["merged_at"]).is_empty();
+            let fate = if merged { Fate::Merged } else if text(j, &["state"]) == "closed" { Fate::Closed } else { Fate::Open };
+            let when = time_of(&[text(j, &[if merged { "merged_at" } else { "updated_at" }]), text(j, &["created_at"])]);
+            Request {
+            fate,
+            when,
             number: text(j, &["number"]),
             title: text(j, &["title"]),
             url: text(j, &["html_url"]),
@@ -387,8 +421,18 @@ fn request_from(kind: Kind, j: &Json) -> Request {
             sha: text(j, &["head", "sha"]),
             author: text(j, &["user", "login"]),
             draft: flag(j, "draft"),
-        },
-        Kind::GitLab => Request {
+            }
+        }
+        Kind::GitLab => {
+            let fate = match text(j, &["state"]).as_str() {
+                "merged" => Fate::Merged,
+                "closed" => Fate::Closed,
+                _ => Fate::Open,
+            };
+            let when = time_of(&[text(j, &[if fate == Fate::Merged { "merged_at" } else { "updated_at" }]), text(j, &["updated_at"]), text(j, &["created_at"])]);
+            Request {
+            fate,
+            when,
             number: text(j, &["iid"]),
             title: text(j, &["title"]),
             url: text(j, &["web_url"]),
@@ -397,8 +441,16 @@ fn request_from(kind: Kind, j: &Json) -> Request {
             sha: text(j, &["sha"]),
             author: text(j, &["author", "username"]),
             draft: flag(j, "draft") || flag(j, "work_in_progress"),
-        },
+            }
+        }
         Kind::Bitbucket => Request {
+            fate: match text(j, &["state"]).as_str() {
+                "MERGED" => Fate::Merged,
+                "DECLINED" | "SUPERSEDED" => Fate::Closed,
+                _ => Fate::Open,
+            },
+            // Bitbucket has no time of merging of its own: a merged request is not changed after.
+            when: time_of(&[text(j, &["updated_on"]), text(j, &["created_on"])]),
             number: text(j, &["id"]),
             title: text(j, &["title"]),
             url: text(j, &["links", "html", "href"]),
@@ -529,6 +581,26 @@ pub fn load(site: &Site) -> Info {
         info.ci = ci_from(site, &j);
     }
     info
+}
+
+/// Every request there was out of a branch — open, closed and merged — in the order of
+/// [`sort_requests`]. The last hundred the hosting has (fifty at Bitbucket).
+pub fn branch_requests(site: &Site, branch: &str) -> Result<Vec<Request>, String> {
+    let api = site.repo_api().filter(|_| !site.token.is_empty()).ok_or("no token for this host in Settings → Hosting")?;
+    let mut list = requests_from(site.kind, &site.get(branch_requests_url(site, &api, branch))?);
+    // The hosting was asked for this branch; a request from a fork's branch of the same name is not ours.
+    list.retain(|r| r.source == branch);
+    sort_requests(&mut list);
+    Ok(list)
+}
+
+fn branch_requests_url(site: &Site, api: &str, branch: &str) -> String {
+    match site.kind {
+        // "owner:branch": the branch in this repository, not in a fork.
+        Kind::GitHub => format!("{api}/pulls?state=all&head={}&sort=updated&direction=desc&per_page=100", encode(&format!("{}:{branch}", site.path.split('/').next().unwrap_or("")))),
+        Kind::GitLab => format!("{api}/merge_requests?state=all&source_branch={}&order_by=updated_at&per_page=100", encode(branch)),
+        Kind::Bitbucket => format!("{api}/pullrequests?state=OPEN&state=MERGED&state=DECLINED&state=SUPERSEDED&q={}&sort=-updated_on&pagelen=50", encode(&format!("source.branch.name=\"{}\"", branch.replace('\\', "\\\\").replace('"', "\\\"")))),
+    }
 }
 
 /// The body of the request that creates a pull request.
@@ -750,7 +822,7 @@ mod tests {
         let gh = json(r#"[{"number":12,"title":"Add the search","html_url":"https://github.com/octo/site/pull/12","draft":true,"user":{"login":"alex"},
             "head":{"ref":"feature/search","sha":"1111111111111111111111111111111111111111"},"base":{"ref":"main"}}]"#);
         let r = requests_from(Kind::GitHub, &gh);
-        assert_eq!(r, vec![Request { number: "12".into(), title: "Add the search".into(), url: "https://github.com/octo/site/pull/12".into(), source: "feature/search".into(), target: "main".into(), sha: "1".repeat(40), author: "alex".into(), draft: true }]);
+        assert_eq!(r, vec![Request { number: "12".into(), title: "Add the search".into(), url: "https://github.com/octo/site/pull/12".into(), source: "feature/search".into(), target: "main".into(), sha: "1".repeat(40), author: "alex".into(), draft: true, fate: Fate::Open, when: 0 }]);
         let gl = json(r#"[{"iid":7,"id":900,"title":"Fix","web_url":"https://gitlab.example.com/g/r/-/merge_requests/7","draft":false,"source_branch":"fix","target_branch":"dev","sha":"abc","author":{"username":"dana"}}]"#);
         let r = requests_from(Kind::GitLab, &gl);
         assert_eq!((r[0].number.as_str(), r[0].source.as_str(), r[0].target.as_str(), r[0].author.as_str(), r[0].draft), ("7", "fix", "dev", "dana", false));
@@ -761,6 +833,43 @@ mod tests {
         let info = Info { requests: r, ..Default::default() };
         assert_eq!(info.requests_of("docs").len(), 1);
         assert!(info.requests_of("main").is_empty());
+    }
+
+    #[test]
+    fn reads_what_became_of_a_request_and_orders_the_list() {
+        let gh = json(r#"[
+            {"number":3,"title":"Merged long ago","state":"closed","merged_at":"2026-10-01T08:00:00Z","updated_at":"2026-11-23T08:00:00Z","created_at":"2026-09-30T08:00:00Z","head":{"ref":"f"},"base":{"ref":"main"}},
+            {"number":9,"title":"Open","state":"open","merged_at":null,"updated_at":"2026-11-20T10:00:00Z","created_at":"2026-11-19T08:00:00Z","head":{"ref":"f"},"base":{"ref":"main"}},
+            {"number":7,"title":"Merged lately","state":"closed","merged_at":"2026-11-10T08:00:00Z","updated_at":"2026-11-10T08:00:00Z","head":{"ref":"f"},"base":{"ref":"main"}},
+            {"number":8,"title":"Closed without merging","state":"closed","merged_at":null,"updated_at":"2026-11-22T10:00:00Z","head":{"ref":"f"},"base":{"ref":"main"}}]"#);
+        let mut list = requests_from(Kind::GitHub, &gh);
+        sort_requests(&mut list);
+        let seen: Vec<(&str, Fate)> = list.iter().map(|r| (r.number.as_str(), r.fate)).collect();
+        // Not merged first (the latest change first), then the merged ones by the day of merging.
+        assert_eq!(seen, vec![("8", Fate::Closed), ("9", Fate::Open), ("7", Fate::Merged), ("3", Fate::Merged)]);
+        assert_eq!(list[3].when, chrono::DateTime::parse_from_rfc3339("2026-10-01T08:00:00Z").unwrap().timestamp());
+        let gl = requests_from(Kind::GitLab, &json(r#"[{"iid":1,"state":"merged","merged_at":"2026-11-10T08:00:00.123Z","updated_at":"2026-11-12T08:00:00.000Z","source_branch":"f","target_branch":"main"},
+            {"iid":2,"state":"opened","merged_at":null,"updated_at":"2026-11-12T08:00:00.000+03:00","source_branch":"f","target_branch":"main"},
+            {"iid":3,"state":"closed","updated_at":"bad","created_at":"2026-11-01T00:00:00Z","source_branch":"f","target_branch":"main"},
+            {"iid":4,"state":"locked","source_branch":"f","target_branch":"main"}]"#));
+        assert_eq!(gl.iter().map(|r| r.fate).collect::<Vec<_>>(), vec![Fate::Merged, Fate::Open, Fate::Closed, Fate::Open]);
+        assert_eq!(gl[0].when, chrono::DateTime::parse_from_rfc3339("2026-11-10T08:00:00Z").unwrap().timestamp());
+        assert_eq!(gl[1].when, chrono::DateTime::parse_from_rfc3339("2026-11-12T05:00:00Z").unwrap().timestamp());
+        assert!(gl[2].when > 0 && gl[3].when == 0);
+        let bb = requests_from(Kind::Bitbucket, &json(r#"{"values":[{"id":1,"state":"MERGED","updated_on":"2026-11-10T08:00:00.123456+00:00","source":{"branch":{"name":"f"}},"destination":{"branch":{"name":"main"}}},
+            {"id":2,"state":"DECLINED","source":{"branch":{"name":"f"}},"destination":{"branch":{"name":"main"}}},{"id":3,"state":"SUPERSEDED"},{"id":4,"state":"OPEN"}]}"#));
+        assert_eq!(bb.iter().map(|r| r.fate).collect::<Vec<_>>(), vec![Fate::Merged, Fate::Closed, Fate::Closed, Fate::Open]);
+        assert!(bb[0].when > 0);
+    }
+
+    #[test]
+    fn asks_for_all_the_requests_of_a_branch() {
+        let gh = site("git@github.com:octo/site.git");
+        assert_eq!(branch_requests_url(&gh, "A", "feature/x y"), "A/pulls?state=all&head=octo%3Afeature%2Fx%20y&sort=updated&direction=desc&per_page=100");
+        let gl = site("git@gitlab.com:g/sub/r.git");
+        assert_eq!(branch_requests_url(&gl, "A", "feature/x"), "A/merge_requests?state=all&source_branch=feature%2Fx&order_by=updated_at&per_page=100");
+        let bb = site("git@bitbucket.org:team/app.git");
+        assert_eq!(branch_requests_url(&bb, "A", "fix\"1"), "A/pullrequests?state=OPEN&state=MERGED&state=DECLINED&state=SUPERSEDED&q=source.branch.name%3D%22fix%5C%221%22&sort=-updated_on&pagelen=50");
     }
 
     #[test]
