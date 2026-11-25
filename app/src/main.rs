@@ -36,6 +36,8 @@ mod reflog;
 mod reflog_view;
 mod rebase_view;
 mod favorites_view;
+mod files;
+mod files_view;
 mod find;
 mod external;
 mod hosting;

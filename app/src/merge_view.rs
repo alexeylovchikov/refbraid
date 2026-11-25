@@ -1052,7 +1052,7 @@ impl App {
                 ui.horizontal(|ui| {
                     let doc = &self.merges[i];
                     let text = !doc.no_text;
-                    if theme::icon_button_sized(ui, Icon::Expand, tr("Previous conflict"), 24.0, false, text).clicked() {
+                    if theme::icon_button_sized(ui, Icon::ChevronUp, tr("Previous conflict"), 24.0, false, text).clicked() {
                         act = Some(MAct::Go(false));
                     }
                     if theme::icon_button_sized(ui, Icon::ChevronDown, tr("Next conflict"), 24.0, false, text).clicked() {

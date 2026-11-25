@@ -300,6 +300,7 @@ pub enum Icon {
     Trash,
     Eye,
     ChevronDown,
+    ChevronUp,
     ChevronRight,
     ChevronLeft,
     Close,
@@ -466,6 +467,9 @@ pub fn paint_icon(p: &Painter, rect: Rect, icon: Icon, color: Color32) {
         }
         Icon::ChevronDown => {
             p.add(Shape::line(vec![pt(4.0, 6.0), pt(8.0, 10.0), pt(12.0, 6.0)], st));
+        }
+        Icon::ChevronUp => {
+            p.add(Shape::line(vec![pt(4.0, 10.0), pt(8.0, 6.0), pt(12.0, 10.0)], st));
         }
         Icon::ChevronRight => {
             p.add(Shape::line(vec![pt(6.0, 4.0), pt(10.0, 8.0), pt(6.0, 12.0)], st));

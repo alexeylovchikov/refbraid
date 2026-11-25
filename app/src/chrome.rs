@@ -695,6 +695,10 @@ impl App {
             if theme::icon_button_sized(ui, Icon::StarOutline, tr("Favorite Repositories"), 26.0, self.show_favorites, true).clicked() {
                 self.toggle_favorites();
             }
+            ui.add_space(4.0);
+            if theme::icon_button_sized(ui, Icon::Folder, tr("Files: the folders and files of the checked-out branch"), 26.0, self.show_files, true).clicked() {
+                self.toggle_files();
+            }
             // (No "Git Log" button: the log is always on screen.)
             ui.add_space(4.0);
             // Commit and Stashes open the same side panel on its Changes / Stash tab;

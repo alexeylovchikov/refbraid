@@ -50,6 +50,7 @@ impl App {
                 self.diff_tab(ui, i)
             }
             Tab::Blame(i) => self.blame_tab(ui, i),
+            Tab::File(i) => self.file_tab(ui, i),
             Tab::Reflog => self.reflog_tab(ui),
         }
     }
@@ -106,6 +107,20 @@ impl App {
             if let Some(i) = close {
                 self.close_blame(i);
             }
+            let mut close = None;
+            for i in 0..self.file_tabs.len() {
+                let t = self.file_tab_title(i);
+                let (c, x) = tab_button(ui, &t, self.tab == Tab::File(i), true);
+                if c {
+                    self.tab = Tab::File(i);
+                }
+                if x {
+                    close = Some(i);
+                }
+            }
+            if let Some(i) = close {
+                self.close_file_tab(i);
+            }
             if self.reflog.is_some() {
                 let (c, x) = tab_button(ui, tr("Reflog"), self.tab == Tab::Reflog, true);
                 if c {
@@ -136,6 +151,11 @@ impl App {
                 for i in 0..self.blames.len() {
                     if ui.button(self.blame_tab_title(i)).clicked() {
                         self.tab = Tab::Blame(i);
+                    }
+                }
+                for i in 0..self.file_tabs.len() {
+                    if ui.button(self.file_tab_title(i)).clicked() {
+                        self.tab = Tab::File(i);
                     }
                 }
                 if self.reflog.is_some() && ui.button(tr("Reflog")).clicked() {
@@ -319,6 +339,7 @@ impl App {
                 text_sel: None,
                 blame: None,
                 syntax: None,
+                reading: false,
                 // The search stays open from one commit to the next.
                 find: prev.as_ref().and_then(|p| p.find.clone()).map(|mut f| {
                     f.cache = None;

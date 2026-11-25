@@ -598,12 +598,22 @@ pub struct DiffTab {
     pub find: Option<crate::find::Find>,
     /// Syntax colours of the lines, worked out when the diff is first drawn.
     pub syntax: Option<crate::syntax::DiffColors>,
+    /// Not a diff: a file of the working folder open for reading (the Files panel). Its lines
+    /// are shown with their numbers, and the text is selected, searched and walked with the
+    /// keyboard as in a diff.
+    pub reading: bool,
 }
 
 impl DiffTab {
     /// "Diff: name", or "<Diff: name>" for the quick-view tab.
     pub fn tab_title(&self) -> String {
-        if self.preview { format!("<Diff: {}>", self.title) } else { format!("Diff: {}", self.title) }
+        if self.reading {
+            self.title.clone()
+        } else if self.preview {
+            format!("<Diff: {}>", self.title)
+        } else {
+            format!("Diff: {}", self.title)
+        }
     }
 }
 
@@ -690,6 +700,8 @@ pub enum Tab {
     Diff(usize),
     /// An "Annotate: file" tab (git blame).
     Blame(usize),
+    /// A file open for reading (a double-click in the Files panel).
+    File(usize),
     /// The Reflog tab (Git → Reflog).
     Reflog,
 }
@@ -799,6 +811,7 @@ pub struct Workspace {
     pub compare: Option<crate::branch_menu::CompareView>,
     pub merges: Vec<crate::merge::MergeDoc>,
     pub blames: Vec<crate::blame::BlameTab>,
+    pub file_tabs: Vec<crate::files_view::FileTab>,
     pub reflog: Option<crate::reflog::View>,
     pub history_diff: Option<(String, Option<DiffTab>)>,
     pub show_conflicts: bool,
@@ -847,6 +860,9 @@ pub struct App {
     pub show_commit: bool,
     /// The Favorites panel (favourite repositories) at the left.
     pub show_favorites: bool,
+    /// The Files panel (the tree of the tracked files) at the left, and what it holds.
+    pub show_files: bool,
+    pub files: crate::files_view::FilesState,
     pub fav: crate::favorites_view::FavState,
     pub show_details: bool,
     pub show_branches: bool,
@@ -919,6 +935,7 @@ pub struct App {
     pub merges: Vec<crate::merge::MergeDoc>,
     /// Annotate tabs.
     pub blames: Vec<crate::blame::BlameTab>,
+    pub file_tabs: Vec<crate::files_view::FileTab>,
     /// The Reflog tab, while it is open.
     pub reflog: Option<crate::reflog::View>,
     /// File history tab: the commit whose change of the file is shown at the right, and that
@@ -1008,6 +1025,8 @@ impl App {
             diffs: vec![],
             show_commit: false,
             show_favorites: false,
+            show_files: false,
+            files: Default::default(),
             fav: Default::default(),
             show_details: true,
             show_branches: true,
@@ -1060,6 +1079,7 @@ impl App {
             diff_annotate: false,
             rebase_ai: None,
             blames: Vec::new(),
+            file_tabs: Vec::new(),
             reflog: None,
             conflict_ai: vec![],
             skills: vec![],
@@ -1516,6 +1536,15 @@ impl App {
                         app.select_commit(i);
                     }
                 }
+                if view.contains("srctree") {
+                    // The Files panel with a folder open; with `srcpage` a file open for reading too.
+                    app.show_files = true;
+                    app.files_tick();
+                    app.files.open_for_demo("src");
+                    if view.contains("srcpage") {
+                        app.open_file_tab("src/app.py");
+                    }
+                }
                 if view.contains("newversion") {
                     // A newer release as GitHub would describe it (nothing is asked over the network).
                     let v = env!("CARGO_PKG_VERSION");
@@ -1873,7 +1902,7 @@ impl App {
         macro_rules! swap {
             ($($f:ident),*) => { $(std::mem::swap(&mut self.$f, &mut w.$f);)* };
         }
-        swap!(repo, tab, diffs, compare, merges, blames, reflog, history_diff, show_conflicts, conflicts_sel, merge_open, merge_confirm, merge_find, stash_open, conflicts_done, conflict_info, conflict_theirs, had_conflicts, log_tabs, active_log, undo, undo_note, commit_opts);
+        swap!(repo, tab, diffs, compare, merges, blames, file_tabs, reflog, history_diff, show_conflicts, conflicts_sel, merge_open, merge_confirm, merge_find, stash_open, conflicts_done, conflict_info, conflict_theirs, had_conflicts, log_tabs, active_log, undo, undo_note, commit_opts);
     }
 
     /// Put the repository in front aside, with everything open in it.
@@ -2516,6 +2545,10 @@ impl App {
 
     fn refresh_within(&mut self, wait: u64) {
         self.pushed_memo = None;
+        // The files of the branch and the ones open for reading may have changed with it.
+        self.files.stale = true;
+        self.file_tabs.iter_mut().for_each(|t| t.stale = true);
+        self.reload_reading_tabs();
         if let Some(repo) = self.repo.as_mut() {
             Self::load_everything(repo, wait);
             if let Some(i) = repo.selected {
@@ -3425,6 +3458,7 @@ impl App {
             text_sel: None,
             find: None,
             syntax: None,
+            reading: false,
             blame: None,
         });
         self.tab = Tab::Diff(self.diffs.len() - 1);
@@ -3699,6 +3733,7 @@ impl App {
             "close_tab" => match self.tab {
                 Tab::Diff(i) => self.close_diff(i),
                 Tab::Blame(i) => self.close_blame(i),
+                Tab::File(i) => self.close_file_tab(i),
                 _ => {}
             },
             "commit" => self.open_commit(),
@@ -3847,6 +3882,20 @@ impl App {
                 .show(ui, |ui| self.favorites_panel(ui));
             let w = r.response.rect.width();
             self.remember_width(ui, w, |s| &mut s.favorites_width);
+        }
+        // The files of the branch come next.
+        self.files_tick();
+        if self.show_files {
+            let w = if self.settings.files_width > 0.0 { self.settings.files_width } else { 280.0 };
+            let r = egui::Panel::left("files")
+                .default_size(w)
+                .min_size(200.0)
+                .max_size((ui.available_width() - 600.0).max(200.0))
+                .resizable(true)
+                .frame(egui::Frame::new().fill(theme::BG()).stroke(Stroke::new(1.0, theme::BORDER())))
+                .show(ui, |ui| self.files_panel(ui));
+            let w = r.response.rect.width();
+            self.remember_width(ui, w, |s| &mut s.files_width);
         }
         if self.repo.is_none() {
             let r = egui::CentralPanel::default()

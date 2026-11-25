@@ -222,6 +222,8 @@ pub struct Settings {
     pub fav_groups: Vec<FavGroup>,
     /// Width of the Favorites panel (0 = default).
     pub favorites_width: f32,
+    /// Width of the Files panel (0 = the default).
+    pub files_width: f32,
 }
 
 /// The default title bar tint (navy) and ready-made ones for the palette in Settings → Window.
@@ -334,6 +336,8 @@ impl Settings {
                 s.fav_groups.push(FavGroup { name: unesc(name), collapsed: collapsed == "1" });
             } else if let Some(v) = line.strip_prefix("favwidth=") {
                 s.favorites_width = v.parse().unwrap_or(0.0);
+            } else if let Some(v) = line.strip_prefix("fileswidth=") {
+                s.files_width = v.parse().unwrap_or(0.0);
             } else if let Some(v) = line.strip_prefix("fav=") {
                 s.favorites.insert(v.to_string());
             } else if let Some(v) = line.strip_prefix("favinit=") {
@@ -529,6 +533,9 @@ impl Settings {
         }
         for r in &self.fav_repos {
             out.push_str(&format!("favrepo={}\t{}\n", tab1(&r.group), tab1(&r.path.display().to_string())));
+        }
+        if self.files_width > 0.0 {
+            out.push_str(&format!("fileswidth={}\n", self.files_width.round()));
         }
         if self.favorites_width > 0.0 {
             out.push_str(&format!("favwidth={}\n", self.favorites_width.round()));

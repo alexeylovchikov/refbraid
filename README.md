@@ -56,6 +56,8 @@ Before its first public release the program was developed under the working name
   helpers.
 - **Diff** — side by side or unified, word-level changes, syntax colouring, search,
   white-space modes, keyboard text selection, pictures, external diff tools.
+- **Files** — the tree of the files of the checked-out branch with a filter by name; a
+  double-click opens a file for reading, with syntax colours.
 - **Branches and history** — merge with options, interactive rebase, cherry-pick and revert,
   reset, tags, worktrees, bisect, reflog, undo of the last action.
 - **Conflicts** — a three-column merge window (yours · result · theirs), simple conflicts

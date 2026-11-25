@@ -262,7 +262,7 @@ pub fn find_line(ui: &mut Ui, f: &mut crate::find::Find, hint: &str, count: (usi
             ui.memory_mut(|m| m.request_focus(edit_id));
         }
     }
-    if theme::icon_button_sized(ui, Icon::Expand, tr("Previous match (Shift+F3)"), 24.0, false, total > 0).clicked() {
+    if theme::icon_button_sized(ui, Icon::ChevronUp, tr("Previous match (Shift+F3)"), 24.0, false, total > 0).clicked() {
         f.step(total, false);
     }
     if theme::icon_button_sized(ui, Icon::ChevronDown, tr("Next match (F3 or Enter)"), 24.0, false, total > 0).clicked() {
@@ -1623,7 +1623,7 @@ impl App {
         let mut revert: Option<usize> = None;
         // "Open in an external diff tool" at the right end of the toolbar, when tools are on.
         let source = self.diffs[i].source.clone();
-        let ext_tools: Vec<crate::settings::ExtTool> = if self.settings.ext_enabled && source.is_some() {
+        let ext_tools: Vec<crate::settings::ExtTool> = if self.settings.ext_enabled && source.is_some() && !self.diffs[i].reading {
             self.settings.ext_tools.iter().filter(|t| t.kind == crate::settings::ExtKind::Diff).cloned().collect()
         } else {
             vec![]
@@ -1631,7 +1631,8 @@ impl App {
         let ext_default = source
             .as_ref()
             .and_then(|s| crate::external::tool_for(&self.settings, s.path(), crate::settings::ExtKind::Diff).cloned())
-            .or_else(|| ext_tools.first().cloned());
+            .or_else(|| ext_tools.first().cloned())
+            .filter(|_| !self.diffs[i].reading);
         let mut ext_open: Option<crate::settings::ExtTool> = None;
         // The arrow keys move the text cursor here when the diff's text was clicked, or when
         // this tab is in front and no list beside it has taken them.
@@ -1640,6 +1641,14 @@ impl App {
         let mut focus_text = false;
         let scroll_id = egui::Id::unique(("diff_scroll_to", i));
         let d = &mut self.diffs[i];
+        // A file open for reading is one text: no two sides, nothing folded.
+        let reading = d.reading;
+        if reading {
+            d.side_by_side = false;
+            d.collapse = false;
+        }
+        // The column of line numbers of such a file.
+        let num_w = if reading { 54.0 } else { 0.0 };
         let side = d.side_by_side;
         // Search (Ctrl+F): the places to mark on each line, and the one to bring into view.
         let mut find_marks: HashMap<(u8, usize), Vec<(usize, usize, bool)>> = HashMap::new();
@@ -1682,11 +1691,23 @@ impl App {
             .frame(egui::Frame::new().fill(theme::BG()).inner_margin(egui::Margin::symmetric(10, 4)))
             .show(ui, |ui| {
                 ui.horizontal_centered(|ui| {
+                    if d.reading {
+                        // A file open for reading: what it is, and the search.
+                        ui.label(RichText::new(&d.subtitle).color(theme::TEXT_MID()));
+                        let n = d.diff.unified.len();
+                        ui.label(RichText::new(format!("{n} {}", crate::i18n::plural(n, "line", "lines"))).color(theme::TEXT_DIM()).size(12.0));
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if theme::icon_button_sized(ui, Icon::Search, &format!("{}  ({})", tr("Find in the file"), crate::keymap::shown("Ctrl+F")), 24.0, d.find.is_some(), true).clicked() {
+                                d.find = if d.find.is_some() { None } else { Some(crate::find::Find { focus: true, ..Default::default() }) };
+                            }
+                        });
+                        return;
+                    }
                     let top_row = ((cur + 60.0) / DIFF_ROW) as usize;
                     if theme::icon_button_sized(ui, Icon::ChevronDown, tr("Next difference"), 24.0, false, true).clicked() {
                         d.jump = starts.iter().copied().find(|&s| s > top_row + 1).or(starts.first().copied());
                     }
-                    if theme::icon_button_sized(ui, Icon::Expand, tr("Previous difference"), 24.0, false, true).clicked() {
+                    if theme::icon_button_sized(ui, Icon::ChevronUp, tr("Previous difference"), 24.0, false, true).clicked() {
                         d.jump = starts.iter().copied().rev().find(|&s| s + 1 < top_row).or(starts.last().copied());
                     }
                     ui.add_space(8.0);
@@ -1754,7 +1775,8 @@ impl App {
                 .show(ui, |ui| {
                     let r = ui.max_rect().expand2(vec2(10.0, 4.0));
                     theme::hline(ui, r.top() + 0.5, r.left(), r.right());
-                    ui.horizontal_centered(|ui| find_close = find_line(ui, f, "Search in the diff", find_count));
+                    let hint = if reading { "Search in the file" } else { "Search in the diff" };
+                    ui.horizontal_centered(|ui| find_close = find_line(ui, f, hint, find_count));
                 });
         }
         if find_close {
@@ -1793,7 +1815,7 @@ impl App {
                     return;
                 }
                 if d.diff.rows.is_empty() {
-                    ui.painter().text(r.center(), egui::Align2::CENTER_CENTER, tr("No differences"), FontId::proportional(13.0), theme::TEXT_MID());
+                    ui.painter().text(r.center(), egui::Align2::CENTER_CENTER, tr(if reading { "The file is empty" } else { "No differences" }), FontId::proportional(13.0), theme::TEXT_MID());
                     return;
                 }
                 let mut sa = egui::ScrollArea::vertical().id_salt(("diff", i)).auto_shrink([false, false]);
@@ -1817,7 +1839,7 @@ impl App {
                         gutter + ann_w + 50.0 + Self::widest(ui, &mono, rows.iter().filter_map(|r| r.right.as_ref().map(|(_, t)| t.as_str()))) + 30.0,
                     )
                 } else {
-                    let w = ann_w + 10.0 + theme::text_width(ui, "+ ", &mono) + Self::widest(ui, &mono, unified.iter().map(|(_, t)| t.as_str())) + 30.0;
+                    let w = ann_w + num_w + 10.0 + theme::text_width(ui, "+ ", &mono) + Self::widest(ui, &mono, unified.iter().map(|(_, t)| t.as_str())) + 30.0;
                     (w, 0.0)
                 };
                 let split = d.split;
@@ -2017,7 +2039,10 @@ impl App {
                             } else {
                                 p
                             };
-                            origins[2] = rect.left() + ann_w + 10.0 - hs_l + 2.0 * cw;
+                            // The text starts after the column of numbers (a file being read) and
+                            // after the "+ " / "- " of a diff line.
+                            let text_x = rect.left() + ann_w + num_w + 10.0 - hs_l;
+                            origins[2] = text_x + if reading { 0.0 } else { 2.0 * cw };
                             if let Some(s) = tsel.filter(|s| s.side == 2 && *tag != '@') {
                                 paint_text_sel(&p, &s, k, text.replace('\t', "    ").chars().count(), origins[2], cw, rect);
                                 if show_caret {
@@ -2027,7 +2052,7 @@ impl App {
                             if let Some(ms) = find_marks.get(&(2, k)) {
                                 paint_find(&p, ms, origins[2], cw, rect);
                             }
-                            let prefix = if *tag == '@' { String::new() } else { format!("{tag} ") };
+                            let prefix = if *tag == '@' || reading { String::new() } else { format!("{tag} ") };
                             let shown = format!("{prefix}{}", text.replace('\t', "    "));
                             // A removed line followed by the line it became: colour the words that differ.
                             let marks: Vec<std::ops::Range<usize>> = unified_partner(unified, k)
@@ -2041,11 +2066,17 @@ impl App {
                                 .unwrap_or_default();
                             let syn: &[crate::syntax::Span] = syntax.as_ref().and_then(|c| c.unified.get(k)).map_or(&[], |v| v.as_slice());
                             if marks.is_empty() && syn.is_empty() {
-                                p.text(pos2(rect.left() + ann_w + 10.0 - hs_l, cy), egui::Align2::LEFT_CENTER, shown, mono.clone(), col);
+                                p.text(pos2(text_x, cy), egui::Align2::LEFT_CENTER, shown, mono.clone(), col);
                             } else {
                                 let job = diff_line_job(&shown, &marks, &mono, if *tag == '-' { theme::adapt(W_REMOVED) } else { theme::adapt(W_ADDED) }, syn, prefix.len(), col);
                                 let gal = ui.fonts_mut(|f| f.layout_job(job));
-                                p.galley(pos2(rect.left() + ann_w + 10.0 - hs_l, cy - gal.size().y / 2.0), gal, col);
+                                p.galley(pos2(text_x, cy - gal.size().y / 2.0), gal, col);
+                            }
+                            if reading {
+                                // The number of the line stays put over the text that scrolls sideways.
+                                let nr = Rect::from_min_size(pos2(rect.left() + ann_w, rect.top()), vec2(num_w, rect.height()));
+                                p.rect_filled(nr, 0.0, theme::BG());
+                                p.text(pos2(nr.right() - 10.0, cy), egui::Align2::RIGHT_CENTER, (k + 1).to_string(), mono.clone(), theme::TEXT_DIM());
                             }
                         }
                     }
