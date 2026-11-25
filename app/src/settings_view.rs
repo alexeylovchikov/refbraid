@@ -972,6 +972,8 @@ impl App {
         if ui.small_button("Reset to default").clicked() {
             d.s.ai_prompt = ai::DEFAULT_PROMPT.to_string();
         }
+        ui.add_space(12.0);
+        crate::ai_view::auto_message_checkbox(ui, &mut d.s.ai_auto_message);
     }
 
     fn page_conflicts(&mut self, ui: &mut Ui) {

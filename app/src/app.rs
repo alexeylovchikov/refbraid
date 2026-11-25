@@ -867,6 +867,10 @@ pub struct App {
     /// Installed AI agents found on this computer.
     pub agents: Vec<(&'static str, PathBuf)>,
     pub ai_job: Option<crate::ai::Running>,
+    /// The Commit panel was shown on the last frame, and until when its opening may still
+    /// start the automatic commit message (`auto_message_tick`).
+    pub commit_seen: bool,
+    pub auto_message_until: Option<Instant>,
     pub ai_error: Option<String>,
     pub show_settings: bool,
     /// The title bar style this run started with (changing it needs a restart).
@@ -1022,6 +1026,8 @@ impl App {
             error: None,
             agents: crate::ai::detect(),
             ai_job: None,
+            commit_seen: true,
+            auto_message_until: None,
             ai_error: None,
             show_settings: false,
             started_builtin_title_bar: false,
@@ -3880,6 +3886,7 @@ impl App {
         }
 
         self.poll_ai();
+        self.auto_message_tick();
         self.poll_conflict_ai();
         self.poll_favorites();
         self.take_compare_request(&ctx);

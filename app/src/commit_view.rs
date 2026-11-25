@@ -1422,6 +1422,10 @@ impl App {
                         if to_settings {
                             self.open_settings(Some(crate::settings_view::Page::Commit));
                         }
+                        ui.add_space(6.0);
+                        if crate::ai_view::auto_message_checkbox(ui, &mut self.settings.ai_auto_message) {
+                            self.settings.save();
+                        }
                         ui.add_space(4.0);
                         let agent = ai_name.unwrap_or("none");
                         ui.horizontal(|ui| {

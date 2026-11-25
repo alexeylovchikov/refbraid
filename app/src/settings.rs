@@ -114,6 +114,9 @@ pub struct Settings {
     pub agent: String,
     /// Extra instructions for generating commit messages.
     pub ai_prompt: String,
+    /// Write the commit message with the AI agent as soon as the Commit panel is opened with
+    /// an empty message.
+    pub ai_auto_message: bool,
     /// The "connect an AI agent" question was already shown.
     pub ai_setup_done: bool,
     /// Recently used commit messages, newest first.
@@ -339,6 +342,8 @@ impl Settings {
                 s.agent = v.to_string();
             } else if let Some(v) = line.strip_prefix("aiprompt=") {
                 s.ai_prompt = unesc(v);
+            } else if line == "aiauto=1" {
+                s.ai_auto_message = true;
             } else if let Some(v) = line.strip_prefix("logopts=") {
                 s.log_topo = v.contains('t');
                 s.log_first_parent = v.contains('f');
@@ -530,6 +535,9 @@ impl Settings {
         }
         out.push_str(&format!("agent={}\n", self.agent));
         out.push_str(&format!("aiprompt={}\n", esc(&self.ai_prompt)));
+        if self.ai_auto_message {
+            out.push_str("aiauto=1\n");
+        }
         out.push_str(&format!(
             "logopts={}{}{}\n",
             if self.log_topo { "t" } else { "" },

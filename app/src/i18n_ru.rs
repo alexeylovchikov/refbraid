@@ -1136,4 +1136,6 @@ pub const PAIRS: &[(&str, &str)] = &[
     ("repository|1", "репозиторий"),
     ("repository|2", "репозитория"),
     ("repository|5", "репозиториев"),
+    ("Write the message when the Commit panel opens", "Писать сообщение при открытии панели Commit"),
+    ("When you open the Commit panel and the message is empty, the AI agent is asked for one at once, as if you pressed the spiral button. The checked changes are sent to the agent each time.", "Когда вы открываете панель Commit, а сообщение пустое, агент ИИ сразу получает запрос на сообщение — как будто вы нажали кнопку со спиралью. Отмеченные изменения каждый раз отправляются агенту."),
 ];

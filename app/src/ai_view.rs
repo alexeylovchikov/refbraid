@@ -51,7 +51,50 @@ pub fn prompt_editor(ui: &mut Ui, prompt: &mut String, show_settings: Option<&mu
     r.changed()
 }
 
+/// The checkbox of the automatic commit message, shared by the commit options popup and
+/// Settings. Returns true when it was changed.
+pub fn auto_message_checkbox(ui: &mut Ui, on: &mut bool) -> bool {
+    ui.checkbox(on, tr("Write the message when the Commit panel opens"))
+        .on_hover_text(tr("When you open the Commit panel and the message is empty, the AI agent is asked for one at once, as if you pressed the spiral button. The checked changes are sent to the agent each time."))
+        .changed()
+}
+
+/// Whether opening the Commit panel should ask the agent for a message right away: the
+/// setting is on, there is nothing typed, no commit is being amended and something is checked.
+pub fn auto_message_due(on: bool, message: &str, amend: bool, checked_files: usize, agent_ready: bool, running: bool) -> bool {
+    on && agent_ready && !running && !amend && checked_files > 0 && message.trim().is_empty()
+}
+
 impl App {
+    /// Every frame: when the Commit panel has just been opened, write the message with the
+    /// agent if the setting says so. The changed files may still be on their way from git, so
+    /// the chance is kept for a couple of seconds.
+    pub fn auto_message_tick(&mut self) {
+        let shown = self.show_commit && self.commit_tab == crate::app::CommitTab::Changes && self.repo.is_some();
+        if shown && !self.commit_seen {
+            self.auto_message_until = Some(Instant::now() + std::time::Duration::from_secs(3));
+        }
+        self.commit_seen = shown;
+        let Some(until) = self.auto_message_until else { return };
+        if !shown || Instant::now() > until || !self.settings.ai_auto_message || self.screenshot.is_some() || cfg!(test) {
+            self.auto_message_until = None;
+            return;
+        }
+        let Some(repo) = self.repo.as_ref() else { return };
+        // Something typed (or a message put there by a merge) is never written over.
+        if !repo.commit_msg.trim().is_empty() || repo.amend {
+            self.auto_message_until = None;
+            return;
+        }
+        let checked = repo.status.iter().filter(|e| !e.is_conflict() && !repo.unchecked.contains(&e.path)).count();
+        if auto_message_due(true, &repo.commit_msg, repo.amend, checked, self.agent_ready(), self.ai_job.is_some()) {
+            self.auto_message_until = None;
+            self.start_ai();
+        } else {
+            self.ctx.request_repaint_after(std::time::Duration::from_millis(200));
+        }
+    }
+
     pub fn agent_name(&self) -> Option<&'static str> {
         ai::harness(&self.settings.agent).map(|h| h.name)
     }
@@ -182,4 +225,23 @@ pub fn agent_radio_list(ui: &mut Ui, agents: &[(&'static str, std::path::PathBuf
         changed = true;
     }
     changed
+}
+
+#[cfg(test)]
+mod tests {
+    use super::auto_message_due;
+
+    #[test]
+    fn the_message_is_written_by_itself_only_into_an_empty_field() {
+        // (setting, message, amend, checked files, agent ready, already running)
+        assert!(auto_message_due(true, "", false, 2, true, false));
+        assert!(auto_message_due(true, "  \n", false, 1, true, false));
+        // Off by the setting; something typed; an amend; nothing checked; no agent; one at work.
+        assert!(!auto_message_due(false, "", false, 2, true, false));
+        assert!(!auto_message_due(true, "Fix the form", false, 2, true, false));
+        assert!(!auto_message_due(true, "", true, 2, true, false));
+        assert!(!auto_message_due(true, "", false, 0, true, false));
+        assert!(!auto_message_due(true, "", false, 2, false, false));
+        assert!(!auto_message_due(true, "", false, 2, true, true));
+    }
 }
