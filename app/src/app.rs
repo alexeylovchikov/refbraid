@@ -3915,24 +3915,6 @@ impl App {
                     });
             }
         }
-        // Screenshot helper: show the project menu with recent repositories (REFBRAID_VIEW=repomenu).
-        if self.screenshot.is_some() && std::env::var("REFBRAID_VIEW").map(|v| v.contains("repomenu")).unwrap_or(false) {
-            if self.settings.recent.len() < 3 {
-                self.settings.recent = ["/tmp/refbraid-demo/sample-project", "/home/user/work/shop/shop-backend-api", "/home/user/work/shop/common", "/home/user/work/shop/shop-frontend-storefront-donation_hall", "/home/user/projects/refbraid"]
-                    .iter()
-                    .map(std::path::PathBuf::from)
-                    .collect();
-            }
-            egui::Area::new(egui::Id::unique("demo_repo_menu"))
-                .order(egui::Order::Foreground)
-                .fixed_pos(egui::pos2(210.0, 36.0))
-                .show(&ctx, |ui| {
-                    egui::Frame::menu(ui.style()).show(ui, |ui| {
-                        egui::containers::menu::menu_style(ui.style_mut());
-                        self.repo_menu(ui);
-                    });
-                });
-        }
         // Screenshot helper: show the branch list under the branch name (REFBRAID_VIEW=branchpopup).
         if self.screenshot.is_some() && std::env::var("REFBRAID_VIEW").map(|v| v.contains("branchpopup")).unwrap_or(false) {
             egui::Area::new(egui::Id::unique("demo_branch_popup"))

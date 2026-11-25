@@ -215,7 +215,6 @@ impl App {
                 ui.ctx().request_repaint();
             }
             ui.add_space(35.0);
-            self.repo_widget(ui);
             self.branch_widget(ui);
 
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -500,45 +499,6 @@ impl App {
             if ui.button(format!("Abort {}", op.title())).clicked() {
                 self.run_job(Job::one(&format!("Abort {}", op.title()), &[op.command(), "--abort"]));
             }
-        }
-    }
-
-    fn repo_widget(&mut self, ui: &mut Ui) {
-        let name = self
-            .repo
-            .as_ref()
-            .map(|r| r.name.clone())
-            .unwrap_or_else(|| "No repository".into());
-        let resp = theme::text_button(ui, None, &format!("{name}  ⌄"), theme::TEXT());
-        egui::Popup::menu(&resp).show(|ui| self.repo_menu(ui));
-    }
-
-    /// The project menu under the repository name: open a folder or a recent repository.
-    pub fn repo_menu(&mut self, ui: &mut Ui) {
-        ui.set_min_width(260.0);
-        if ui.button(tr("Open Repository…")).clicked() {
-            self.choose_folder();
-        }
-        // Favourite repositories are listed in the Favorites panel (the star at the left).
-        if let Some(p) = self.repo.as_ref().map(|r| r.path.clone()) {
-            let fav = self.settings.is_fav_repo(&p);
-            let text = if fav { "★  Remove from Favorites" } else { "☆  Add to Favorites" };
-            if ui.button(text).on_hover_text(tr("Favorite repositories are listed in the Favorites panel (the star at the left)")).clicked() {
-                self.toggle_favorite_repo(&p);
-                if !fav && !self.show_favorites {
-                    self.toggle_favorites();
-                }
-                ui.close();
-            }
-        }
-        ui.separator();
-        ui.label(RichText::new(tr("Recent")).color(theme::TEXT_DIM()).size(11.0));
-        ui.add_space(2.0);
-        let recent = self.settings.recent.clone();
-        match recent_list(ui, &recent, &self.settings.fav_repos) {
-            Some(RecentPick::Open(r)) => self.open(&r),
-            Some(RecentPick::Star(r)) => self.toggle_favorite_repo(&r),
-            None => {}
         }
     }
 
