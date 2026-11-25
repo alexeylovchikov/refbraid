@@ -1113,4 +1113,7 @@ pub const PAIRS: &[(&str, &str)] = &[
     ("The password store of the system can't be read, so the saved tokens are not used: {}", "Системное хранилище паролей не читается, поэтому сохранённые токены не используются: {}"),
     ("The password store of the system can't be used, so the token is kept unprotected in the settings file: {}", "Системное хранилище паролей недоступно, поэтому токен хранится без защиты в файле настроек: {}"),
     ("A token could not be removed from the password store of the system: {}", "Не удалось удалить токен из системного хранилища паролей: {}"),
+    ("Action", "Действие"),
+    ("Shortcut", "Сочетание"),
+    ("Put the default shortcut back", "Вернуть сочетание по умолчанию"),
 ];

@@ -738,29 +738,65 @@ impl App {
                 capturing = None;
             }
         }
+        // A table: the action, its shortcut (a button that takes new keys) and the default one.
+        const NAME_W: f32 = 300.0;
+        const KEYS_W: f32 = 160.0;
+        const ROW_H: f32 = 26.0;
+        let head = |ui: &mut Ui, text: &str, w: f32| {
+            ui.allocate_ui_with_layout(vec2(w, 20.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                ui.set_min_width(w);
+                ui.label(RichText::new(text).size(12.0).color(theme::TEXT_DIM()));
+            });
+        };
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 12.0;
+            ui.add_space(12.0);
+            head(ui, tr("Action"), NAME_W - 12.0);
+            head(ui, tr("Shortcut"), KEYS_W);
+            head(ui, tr("Default"), 120.0);
+        });
+        theme::hline(ui, ui.cursor().top() + 1.0, ui.max_rect().left(), ui.max_rect().right());
+        ui.add_space(3.0);
+        ui.spacing_mut().item_spacing.y = 0.0;
         let mut group = "";
+        let mut odd = false;
         for a in keymap::ACTIONS {
             if a.group != group {
                 group = a.group;
-                ui.add_space(6.0);
+                odd = false;
+                ui.add_space(10.0);
                 ui.label(RichText::new(tr(group)).strong().color(theme::TEXT()));
-                ui.add_space(2.0);
+                ui.add_space(4.0);
             }
             let now = keymap::binding(&d.s.keys, a.id);
             let changed = now != a.default;
-            ui.horizontal(|ui| {
-                ui.allocate_ui_with_layout(vec2(280.0, 22.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                    ui.add_space(12.0);
+            // Every other row on a faint band, so the eye keeps the line across the columns.
+            let row = Rect::from_min_size(ui.cursor().min, vec2(ui.available_width(), ROW_H));
+            if odd {
+                ui.painter().rect_filled(row, 3.0, theme::HOVER());
+            }
+            odd = !odd;
+            ui.allocate_ui_with_layout(vec2(row.width(), ROW_H), egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                ui.set_min_height(ROW_H);
+                ui.spacing_mut().item_spacing.x = 12.0;
+                ui.add_space(12.0);
+                ui.allocate_ui_with_layout(vec2(NAME_W - 12.0, 22.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                    ui.set_min_width(NAME_W - 12.0);
                     ui.add(egui::Label::new(RichText::new(tr(a.name).trim_end_matches('…')).color(theme::TEXT())).truncate());
                 });
                 let waiting = capturing.as_deref() == Some(a.id);
                 let text = if waiting { tr("Press the keys…").to_string() } else if now.is_empty() { "—".to_string() } else { keymap::shown(&now).into_owned() };
-                let b = ui.add_sized([150.0, 22.0], egui::Button::new(RichText::new(text).color(if waiting { theme::LINK() } else if changed { theme::STAR() } else { theme::TEXT() })).selected(waiting));
+                let b = ui.add_sized([KEYS_W, 22.0], egui::Button::new(RichText::new(text).color(if waiting { theme::LINK() } else if changed { theme::STAR() } else { theme::TEXT() })).selected(waiting));
                 if b.on_hover_text(tr("Click to change the shortcut")).clicked() {
                     capturing = if waiting { None } else { Some(a.id.to_string()) };
                 }
-                if changed && ui.link(tr("Reset")).on_hover_text(if a.default.is_empty() { tr("No shortcut by default").to_string() } else { keymap::shown(a.default).into_owned() }).clicked() {
-                    keymap::set(&mut d.s.keys, a.id, a.default);
+                // The default one is named only where the shortcut differs from it.
+                if changed {
+                    let default = if a.default.is_empty() { "—".to_string() } else { keymap::shown(a.default).into_owned() };
+                    ui.label(RichText::new(default).color(theme::TEXT_DIM()).size(12.0));
+                    if ui.link(tr("Reset")).on_hover_text(tr("Put the default shortcut back")).clicked() {
+                        keymap::set(&mut d.s.keys, a.id, a.default);
+                    }
                 }
                 if let Some(other) = keymap::taken_by(&d.s.keys, a.id, &now) {
                     ui.label(RichText::new(crate::i18n::trf("also: {}", &[&tr(other.name).trim_end_matches('…')])).color(theme::RED()).size(12.0));
