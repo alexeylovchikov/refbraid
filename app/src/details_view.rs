@@ -521,14 +521,17 @@ impl App {
                 ui.set_width(ui.available_width());
                 message_with_links(ui, &d.message);
                 ui.add_space(10.0);
-                ui.horizontal_wrapped(|ui| {
-                    let r = ui.add(egui::Label::new(RichText::new(short(&d.hash)).color(theme::LINK())).sense(Sense::click()));
-                    if r.on_hover_text(tr("Click to copy the full hash")).clicked() {
-                        ui.ctx().copy_text(d.hash.clone());
-                    }
-                    ui.label(RichText::new(format!("{} <{}>", d.author, d.email)).color(theme::TEXT_MID()));
-                    ui.label(RichText::new(format!("on {}", format_full_date(d.author_time))).color(theme::TEXT_MID()));
-                });
+                // One text that wraps as a whole: several labels in a wrapping row are pushed
+                // out of the panel by a word longer than the row (a long e-mail address).
+                let piece = |job: &mut egui::text::LayoutJob, text: &str, size: f32, color: Color32| {
+                    job.append(text, 0.0, egui::TextFormat { font_id: egui::FontId::proportional(size), color, ..Default::default() });
+                };
+                let mut who = egui::text::LayoutJob::default();
+                piece(&mut who, short(&d.hash), 13.0, theme::LINK());
+                piece(&mut who, &format!("  {} <{}>  on {}", d.author, d.email, format_full_date(d.author_time)), 13.0, theme::TEXT_MID());
+                if ui.add(egui::Label::new(who).wrap().sense(Sense::click())).on_hover_text(tr("Click to copy the full hash")).clicked() {
+                    ui.ctx().copy_text(d.hash.clone());
+                }
                 if d.committer != d.author || d.commit_time != d.author_time {
                     ui.label(
                         RichText::new(crate::i18n::trf("committed by {} on {}", &[&d.committer, &format_full_date(d.commit_time)]))
@@ -554,24 +557,24 @@ impl App {
                 if let Some((state, signer)) = &d.signature {
                     let (words, good) = crate::git::signature_words(*state);
                     ui.add_space(6.0);
-                    ui.horizontal_wrapped(|ui| {
-                        let color = if good { theme::GREEN() } else if *state == 'B' { theme::RED() } else { theme::STAR() };
-                        ui.label(RichText::new(tr(words)).color(color).size(12.0));
-                        if !signer.is_empty() {
-                            ui.label(RichText::new(signer.as_str()).color(theme::TEXT_DIM()).size(12.0));
-                        }
-                    });
+                    let color = if good { theme::GREEN() } else if *state == 'B' { theme::RED() } else { theme::STAR() };
+                    let mut job = egui::text::LayoutJob::default();
+                    piece(&mut job, tr(words), 12.0, color);
+                    if !signer.is_empty() {
+                        piece(&mut job, &format!("  {signer}"), 12.0, theme::TEXT_DIM());
+                    }
+                    ui.add(egui::Label::new(job).wrap());
                 }
                 for (name, tagger, time, msg) in &d.tags {
                     ui.add_space(6.0);
-                    ui.horizontal_wrapped(|ui| {
-                        ui.label(RichText::new(format!("{} {name}", tr("Tag"))).color(theme::STAR()).size(12.0));
-                        if !tagger.is_empty() {
-                            ui.label(RichText::new(format!("{tagger}, {}", format_full_date(*time))).color(theme::TEXT_DIM()).size(12.0));
-                        }
-                    });
+                    let mut job = egui::text::LayoutJob::default();
+                    piece(&mut job, &format!("{} {name}", tr("Tag")), 12.0, theme::STAR());
+                    if !tagger.is_empty() {
+                        piece(&mut job, &format!("  {tagger}, {}", format_full_date(*time)), 12.0, theme::TEXT_DIM());
+                    }
+                    ui.add(egui::Label::new(job).wrap());
                     if !msg.is_empty() {
-                        ui.label(RichText::new(msg.as_str()).color(theme::TEXT_MID()).size(12.5));
+                        ui.add(egui::Label::new(RichText::new(msg.as_str()).color(theme::TEXT_MID()).size(12.5)).wrap());
                     }
                 }
                 ui.add_space(6.0);
