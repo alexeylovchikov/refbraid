@@ -1,6 +1,21 @@
 # Changelog
 
-<!-- last-commit: e183302e7de1ab16d7aa78bb7fbe015d1243ab32 -->
+<!-- last-commit: d4a7eb9e974af0a9edaa7cb9dd94d27a7b352f88 -->
+
+## 0.6.0 — 2026-11-25
+
+### New
+- **Files**: a new panel on the left stripe (the folder button) with the tree of the folders and files of the current branch, icons by file type and a search by name. A double click opens a file in a tab for reading: line numbers, syntax colours, selection, search and a keyboard cursor; pictures open in the image viewer.
+- The commit details show the pull requests (merge requests on GitLab) the commit came in with, merged and closed ones too.
+- **Update All** in Favorites: one button fetches every repository and moves its current branch forward where that is a plain fast-forward. Nothing is merged or rebased; branches with commits of their own, local changes in the way and repositories that ask for a password are left as they are.
+- The **Write the message when the Commit panel opens** check box (in the Commit panel and in the AI settings): when the message field is empty, the AI agent writes the commit message as soon as the panel opens.
+- The settings of GitHub, GitLab, Bitbucket and JIRA are on one page, Settings → **Integrations**: JIRA is a row of the host list, and the help for each host opens from the "?" mark next to it.
+- Settings → Keymap shows the shortcuts as a table with column headings, and the default shortcut next to a changed one.
+- The drop-down list of repositories is gone from the title bar: repositories are switched by their tabs.
+
+### Fixed
+- In a narrow commit details panel a long e-mail address no longer pushes the author, signature and tag lines out of the panel.
+- The "previous" buttons of the search, the diff and the merge window show an up arrow instead of a double arrow.
 
 ## 0.5.2 — 2026-11-24
 
