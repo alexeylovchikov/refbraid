@@ -1128,4 +1128,12 @@ pub const PAIRS: &[(&str, &str)] = &[
     ("The token is sent only to this host. It is kept in the password store of the system and is not shown again once saved; where there is no such store it is kept in the settings file.", "Токен отправляется только на этот хост. Он хранится в системном хранилище паролей и после сохранения больше не показывается; где такого хранилища нет, он хранится в файле настроек."),
     ("Shows the status of JIRA issues in the commit details. Issue keys (ABC-123) are taken from the commit message, or, when it has none, from the names of the branches that contain the commit.", "Показывает статус задач JIRA в деталях коммита. Ключи задач (ABC-123) берутся из сообщения коммита, а если их там нет — из названий веток, содержащих коммит."),
     ("JIRA Server / Data Center: create a personal access token in your profile (Profile → Personal Access Tokens) and leave the e-mail empty. Jira Cloud: create an API token at id.atlassian.com and enter the e-mail of your account.", "JIRA Server / Data Center: создайте личный токен доступа в профиле (Profile → Personal Access Tokens) и оставьте e-mail пустым. Jira Cloud: создайте API-токен на id.atlassian.com и укажите e-mail своей учётной записи."),
+    ("Update All: fetch every repository and move its current branch forward where that is a plain fast-forward. Nothing is merged or rebased: branches with commits of their own, local changes in the way and repositories that ask for a password are left as they are", "Update All: получить новости каждого репозитория и продвинуть его текущую ветку там, где это простой fast-forward. Ничего не сливается и не перебазируется: ветки со своими коммитами, мешающие локальные изменения и репозитории, требующие пароль, остаются как есть"),
+    ("Update All", "Update All"),
+    ("Every branch was up to date already.", "Все ветки уже были актуальны."),
+    ("{} moved forward, {} in all.", "Продвинуто: {}, всего {}."),
+    ("{} left as they are: point at one in Favorites to see why.", "Оставлено как есть: {} — наведите курсор на репозиторий в Favorites, чтобы увидеть причину."),
+    ("repository|1", "репозиторий"),
+    ("repository|2", "репозитория"),
+    ("repository|5", "репозиториев"),
 ];

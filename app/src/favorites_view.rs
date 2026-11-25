@@ -6,7 +6,7 @@
 //! or the window down; until they arrive the rows show the names only.
 
 use crate::app::{App, Dialog};
-use crate::i18n::tr;
+use crate::i18n::{tr, trf};
 use crate::git;
 use crate::settings::{FavGroup, FavRepo};
 use crate::theme::{self, Icon};
@@ -33,6 +33,9 @@ pub struct FavInfo {
     pub missing: bool,
     /// The last "Fetch All" failed for it (e.g. it needs a password).
     pub fetch_error: Option<String>,
+    /// What the last "Update All" did here: how many commits the current branch was moved
+    /// forward by (0: it was up to date), or why it was left alone.
+    pub update: Option<Result<usize, String>>,
 }
 
 pub struct FavState {
@@ -43,12 +46,16 @@ pub struct FavState {
     loading: HashSet<PathBuf>,
     loaded_at: Option<Instant>,
     fetching: bool,
+    /// "Update All" is running; its outcome so far: repositories moved forward, commits
+    /// brought, repositories left alone.
+    updating: bool,
+    updated: (usize, usize, usize),
 }
 
 impl Default for FavState {
     fn default() -> Self {
         let (tx, rx) = channel();
-        FavState { info: HashMap::new(), tx, rx, loading: HashSet::new(), loaded_at: None, fetching: false }
+        FavState { info: HashMap::new(), tx, rx, loading: HashSet::new(), loaded_at: None, fetching: false, updating: false, updated: (0, 0, 0) }
     }
 }
 
@@ -89,8 +96,45 @@ pub fn read_info(dir: &Path) -> FavInfo {
 
 /// Fetch without ever asking for a password: repositories that need one are skipped and
 /// marked, so "Fetch All" can't pop up a dozen prompts.
+const NO_PROMPT: [(&str, &str); 4] = [("GIT_ASKPASS", ""), ("SSH_ASKPASS", ""), ("SSH_ASKPASS_REQUIRE", "never"), ("GCM_INTERACTIVE", "never")];
+
+/// After a fetch, move the current branch forward to the branch it follows — only when that
+/// is a plain fast-forward. Nothing is merged or rebased and nothing is asked: a detached
+/// HEAD, a branch that follows none, one that has commits of its own, an operation in
+/// progress and local changes that are in the way all leave the repository as it is, with
+/// the reason. Ok(n): moved by n commits (0: it was up to date).
+pub fn pull_quietly(dir: &Path) -> Result<usize, String> {
+    let one = |args: &[&str]| git::run(dir, args);
+    if !one(&["symbolic-ref", "--quiet", "--short", "HEAD"]).ok {
+        return Err("no branch is checked out".into());
+    }
+    if !one(&["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"]).ok {
+        return Err("the branch follows no branch of a server".into());
+    }
+    let git_dir = one(&["rev-parse", "--absolute-git-dir"]).stdout.trim().to_string();
+    if ["MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD", "BISECT_LOG", "rebase-merge", "rebase-apply"].iter().any(|f| Path::new(&git_dir).join(f).exists()) {
+        return Err("a merge, a rebase or a bisect is in progress".into());
+    }
+    let counts = one(&["rev-list", "--left-right", "--count", "HEAD...@{u}"]).stdout;
+    let mut n = counts.split_whitespace().filter_map(|x| x.parse::<usize>().ok());
+    let (ahead, behind) = (n.next().unwrap_or(0), n.next().unwrap_or(0));
+    if behind == 0 {
+        return Ok(0);
+    }
+    if ahead > 0 {
+        return Err(format!("the branch has commits of its own ({ahead} to push, {behind} to pull): pull it yourself"));
+    }
+    let out = git::run_env(dir, &NO_PROMPT, &["merge", "--ff-only", "--quiet", "@{u}"]);
+    if out.ok {
+        Ok(behind)
+    } else {
+        let why = out.stderr.lines().map(str::trim).find(|l| !l.is_empty() && !l.starts_with("Updating")).unwrap_or("git refused").trim_start_matches("error: ").to_string();
+        Err(why)
+    }
+}
+
 fn fetch_quietly(dir: &Path) -> Option<String> {
-    let env = [("GIT_ASKPASS", ""), ("SSH_ASKPASS", ""), ("SSH_ASKPASS_REQUIRE", "never"), ("GCM_INTERACTIVE", "never")];
+    let env = NO_PROMPT;
     let out = git::run_env(dir, &env, &["fetch", "--all", "--prune", "--quiet"]);
     if out.ok {
         None
@@ -173,10 +217,21 @@ impl App {
         let paths: Vec<PathBuf> = self.settings.fav_repos.iter().map(|r| r.path.clone()).filter(|p| !self.fav.loading.contains(p)).collect();
         self.fav.loaded_at = Some(Instant::now());
         self.fav.fetching |= fetch;
-        self.read_favorites(paths, fetch);
+        self.read_favorites(paths, fetch, false);
     }
 
-    fn read_favorites(&mut self, paths: Vec<PathBuf>, fetch: bool) {
+    /// "Update All": fetch every favourite and move its current branch forward where that is
+    /// a plain fast-forward; the rest are left as they are and counted.
+    pub fn update_favorites(&mut self) {
+        let paths: Vec<PathBuf> = self.settings.fav_repos.iter().map(|r| r.path.clone()).filter(|p| !self.fav.loading.contains(p)).collect();
+        self.fav.loaded_at = Some(Instant::now());
+        self.fav.fetching = true;
+        self.fav.updating = true;
+        self.fav.updated = (0, 0, 0);
+        self.read_favorites(paths, true, true);
+    }
+
+    fn read_favorites(&mut self, paths: Vec<PathBuf>, fetch: bool, update: bool) {
         if paths.is_empty() {
             return;
         }
@@ -192,8 +247,11 @@ impl App {
                     let next = queue.lock().ok().and_then(|mut q| q.pop());
                     let Some(p) = next else { break };
                     let err = if fetch && p.is_dir() { fetch_quietly(&p) } else { None };
+                    // A repository that could not be fetched has nothing new to move to.
+                    let moved = if update && p.is_dir() && err.is_none() { Some(pull_quietly(&p)) } else { None };
                     let mut info = read_info(&p);
                     info.fetch_error = err;
+                    info.update = moved;
                     if tx.send((p, info)).is_err() {
                         break;
                     }
@@ -206,21 +264,49 @@ impl App {
     /// The open repository changed (commit, pull, outside change…): update its row.
     pub fn refresh_favorite(&mut self, p: &Path) {
         if self.settings.is_fav_repo(p) && !self.fav.loading.contains(p) {
-            self.read_favorites(vec![p.to_path_buf()], false);
+            self.read_favorites(vec![p.to_path_buf()], false, false);
         }
     }
 
     pub fn poll_favorites(&mut self) {
+        let mut moved_open = false;
         while let Ok((p, mut info)) = self.fav.rx.try_recv() {
             self.fav.loading.remove(&p);
             if info.fetch_error.is_none() && !self.fav.fetching {
                 // A plain re-read keeps the last fetch result.
                 info.fetch_error = self.fav.info.get(&p).and_then(|i| i.fetch_error.clone());
             }
+            match &info.update {
+                Some(Ok(n)) if *n > 0 => {
+                    self.fav.updated.0 += 1;
+                    self.fav.updated.1 += n;
+                    moved_open |= self.repo.as_ref().is_some_and(|r| r.path == p);
+                }
+                Some(Err(_)) => self.fav.updated.2 += 1,
+                // A plain re-read keeps what the last "Update All" said about the repository.
+                None if !self.fav.updating => info.update = self.fav.info.get(&p).and_then(|i| i.update.clone()),
+                _ => {}
+            }
+            if self.fav.updating && info.fetch_error.is_some() {
+                self.fav.updated.2 += 1;
+            }
             self.fav.info.insert(p, info);
+        }
+        if moved_open {
+            // The branch of the open repository moved under it: show the new commits.
+            self.refresh_soon();
         }
         if self.fav.loading.is_empty() {
             self.fav.fetching = false;
+            if std::mem::take(&mut self.fav.updating) {
+                let (repos, commits, skipped) = self.fav.updated;
+                let mut text = if repos == 0 { tr("Every branch was up to date already.").to_string() } else { trf("{} moved forward, {} in all.", &[&format!("{repos} {}", crate::i18n::plural(repos, "repository", "repositories")), &format!("{commits} {}", crate::i18n::plural(commits, "commit", "commits"))]) };
+                if skipped > 0 {
+                    text.push(' ');
+                    text.push_str(&trf("{} left as they are: point at one in Favorites to see why.", &[&skipped]));
+                }
+                self.notify(crate::app::Toast { title: tr("Update All").to_string(), text, ok: true, at: Instant::now() });
+            }
         }
         // Keep the counts fresh while the panel is open.
         if self.show_favorites && self.fav.loading.is_empty() && self.fav.loaded_at.is_none_or(|t| t.elapsed() > Duration::from_secs(120)) {
@@ -240,7 +326,7 @@ impl App {
         if !self.settings.is_fav_repo(&p) {
             self.settings.toggle_fav_repo(&p);
             self.save_settings();
-            self.read_favorites(vec![p], false);
+            self.read_favorites(vec![p], false, false);
         }
     }
 
@@ -248,7 +334,7 @@ impl App {
         self.settings.toggle_fav_repo(p);
         self.save_settings();
         if self.settings.is_fav_repo(p) {
-            self.read_favorites(vec![p.to_path_buf()], false);
+            self.read_favorites(vec![p.to_path_buf()], false, false);
         }
     }
 
@@ -304,6 +390,9 @@ impl App {
                         let any = !self.settings.fav_repos.is_empty();
                         if theme::icon_button_sized(ui, Icon::Fetch, tr("Fetch All: get the news of every repository from its server (repositories that ask for a password are skipped)"), 22.0, false, any && !busy).clicked() {
                             self.load_favorites(true);
+                        }
+                        if theme::icon_button_sized(ui, Icon::Pull, tr("Update All: fetch every repository and move its current branch forward where that is a plain fast-forward. Nothing is merged or rebased: branches with commits of their own, local changes in the way and repositories that ask for a password are left as they are"), 22.0, false, any && !busy).clicked() {
+                            self.update_favorites();
                         }
                         if theme::icon_button_sized(ui, Icon::Refresh, tr("Refresh branches and counts"), 22.0, false, any && !busy).clicked() {
                             self.load_favorites(false);
@@ -442,7 +531,7 @@ impl App {
                                 p.circle_filled(pos2(right - 3.0, y1), 3.5, theme::BLUE_FILE());
                                 right -= 13.0;
                             }
-                            if i.fetch_error.is_some() {
+                            if i.fetch_error.is_some() || matches!(i.update, Some(Err(_))) {
                                 let g = p.text(pos2(right, y1), egui::Align2::RIGHT_CENTER, "!", FontId::proportional(13.0), theme::UNVERSIONED());
                                 right = g.left() - 6.0;
                             }
@@ -487,6 +576,11 @@ impl App {
                                     }
                                     if let Some(e) = &i.fetch_error {
                                         t += &format!("\nFetch failed: {e}");
+                                    }
+                                    match &i.update {
+                                        Some(Ok(n)) if *n > 0 => t += &format!("\nUpdate All moved the branch forward by {}", commits(*n)),
+                                        Some(Err(e)) => t += &format!("\nUpdate All left it as it is: {e}"),
+                                        _ => {}
                                     }
                                 }
                             }
@@ -667,6 +761,62 @@ mod tests {
         assert_eq!(list, vec![fav("/b", "Work"), fav("/a", "Work"), fav("/c", "Work")]);
         move_repo(&mut list, Path::new("/c"), "", None);
         assert_eq!(list, vec![fav("/b", "Work"), fav("/a", "Work"), fav("/c", "")]);
+    }
+
+    #[test]
+    fn pulls_quietly_only_what_is_a_plain_fast_forward() {
+        use crate::testrepo::TestRepo;
+        // The "server", and a clone of it for every case.
+        let server = TestRepo::new("fav-server");
+        server.commit_file("a.txt", "one\n", "First");
+        server.commit_file("b.txt", "b\n", "Second");
+        let main = server.branch();
+        let clone = |tag: &str| {
+            let r = TestRepo::folder(tag);
+            let url = server.dir.display().to_string().replace('\\', "/");
+            assert!(git::run(&r.dir, &["clone", "-q", &url, "."]).ok);
+            r.identity();
+            r
+        };
+        let (behind, dirty, blocked, own, detached, lone) = (clone("fav-behind"), clone("fav-dirty"), clone("fav-blocked"), clone("fav-own"), clone("fav-detached"), clone("fav-lone"));
+        // Changes made before the news arrive: one beside them, one in their way, a commit of its own.
+        dirty.write("local.txt", "mine\n");
+        dirty.write("b.txt", "b\nmine, not committed\n");
+        blocked.write("a.txt", "one\nmine, not committed\n");
+        own.commit_file("own.txt", "x\n", "A commit of my own");
+        detached.git(&["checkout", "-q", "--detach"]);
+        lone.git(&["checkout", "-q", "-b", "lone"]);
+        // Two new commits on the server, both in a.txt.
+        server.commit_file("a.txt", "one\ntwo\n", "Third");
+        server.commit_file("a.txt", "one\ntwo\nthree\n", "Fourth");
+        let top = server.head();
+        for r in [&behind, &dirty, &blocked, &own, &detached, &lone] {
+            assert_eq!(fetch_quietly(&r.dir), None);
+        }
+        // Behind by two: moved forward, and nothing left to pull.
+        assert_eq!(pull_quietly(&behind.dir), Ok(2));
+        assert_eq!(behind.head(), top);
+        assert_eq!(pull_quietly(&behind.dir), Ok(0));
+        // Local changes that the new commits don't touch stay where they are.
+        assert_eq!(pull_quietly(&dirty.dir), Ok(2));
+        assert_eq!((dirty.head(), dirty.read("b.txt"), dirty.read("local.txt")), (top.clone(), "b\nmine, not committed\n".to_string(), "mine\n".to_string()));
+        // Changes in the way: git refuses, and the branch and the file are as they were.
+        let before = blocked.head();
+        let why = pull_quietly(&blocked.dir).unwrap_err();
+        assert!(why.to_lowercase().contains("local changes") || why.to_lowercase().contains("overwritten"), "{why}");
+        assert_eq!((blocked.head(), blocked.read("a.txt")), (before, "one\nmine, not committed\n".to_string()));
+        // A commit of its own: no merge is made for the user.
+        let before = own.head();
+        assert_eq!(pull_quietly(&own.dir), Err("the branch has commits of its own (1 to push, 2 to pull): pull it yourself".into()));
+        assert_eq!((own.head(), own.subjects("HEAD").len()), (before, 3));
+        assert_eq!(pull_quietly(&detached.dir), Err("no branch is checked out".into()));
+        assert_eq!(pull_quietly(&lone.dir), Err("the branch follows no branch of a server".into()));
+        // An operation in progress is not walked into.
+        let busy = clone("fav-busy");
+        busy.git(&["reset", "-q", "--hard", "HEAD~1"]);
+        std::fs::write(busy.dir.join(".git/MERGE_HEAD"), format!("{top}\n")).unwrap();
+        assert_eq!(pull_quietly(&busy.dir), Err("a merge, a rebase or a bisect is in progress".into()));
+        let _ = main;
     }
 
     #[test]
