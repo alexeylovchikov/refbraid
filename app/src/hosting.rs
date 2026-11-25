@@ -614,6 +614,23 @@ pub fn branch_requests(site: &Site, branch: &str) -> Result<Vec<Request>, String
     Ok(list)
 }
 
+/// The requests a commit came in with, or is waiting in: whatever became of them, in the
+/// order of [`sort_requests`].
+pub fn commit_requests(site: &Site, sha: &str) -> Result<Vec<Request>, String> {
+    let api = site.repo_api().filter(|_| !site.token.is_empty()).ok_or("no token for this host in Settings → Hosting")?;
+    let mut list = requests_from(site.kind, &site.get(commit_requests_url(site, &api, sha))?);
+    sort_requests(&mut list);
+    Ok(list)
+}
+
+fn commit_requests_url(site: &Site, api: &str, sha: &str) -> String {
+    match site.kind {
+        Kind::GitHub => format!("{api}/commits/{}/pulls?per_page=30", encode(sha)),
+        Kind::GitLab => format!("{api}/repository/commits/{}/merge_requests", encode(sha)),
+        Kind::Bitbucket => format!("{api}/commit/{}/pullrequests?pagelen=30", encode(sha)),
+    }
+}
+
 fn branch_requests_url(site: &Site, api: &str, branch: &str) -> String {
     match site.kind {
         // "owner:branch": the branch in this repository, not in a fork.
@@ -682,6 +699,11 @@ pub struct Cache {
     map: HashMap<String, Entry>,
     tx: Sender<(String, Info)>,
     rx: Receiver<(String, Info)>,
+    /// The requests of single commits, by repository and hash: when they were asked for and,
+    /// once the answer is here, what it was (nothing when the hosting refused).
+    commits: HashMap<(String, String), (Instant, Option<Vec<Request>>)>,
+    commit_tx: Sender<((String, String), Vec<Request>)>,
+    commit_rx: Receiver<((String, String), Vec<Request>)>,
     /// Nothing is asked over the network (screenshots, tests).
     pub offline: bool,
 }
@@ -689,7 +711,8 @@ pub struct Cache {
 impl Default for Cache {
     fn default() -> Self {
         let (tx, rx) = channel();
-        Cache { map: HashMap::new(), tx, rx, offline: cfg!(test) }
+        let (commit_tx, commit_rx) = channel();
+        Cache { map: HashMap::new(), tx, rx, commits: HashMap::new(), commit_tx, commit_rx, offline: cfg!(test) }
     }
 }
 
@@ -719,6 +742,40 @@ impl Cache {
         self.map.get(&id).and_then(|e| e.info.as_ref())
     }
 
+    /// The requests of one commit; starts reading them when they are not known, or were read a
+    /// while ago. None until the answer is here.
+    pub fn commit_requests(&mut self, site: &Site, sha: &str, ctx: &eframe::egui::Context) -> Option<&[Request]> {
+        while let Ok((key, list)) = self.commit_rx.try_recv() {
+            self.commits.insert(key, (Instant::now(), Some(list)));
+        }
+        let key = (site.id(), sha.to_string());
+        let due = match self.commits.get(&key) {
+            None => true,
+            // Asked and not answered yet: wait. Answered: again when it is old.
+            Some((_, None)) => false,
+            Some((at, Some(_))) => at.elapsed() > FRESH,
+        };
+        if due && site.connected() && !self.offline {
+            // What was known stays on show while it is read again.
+            let known = self.commits.remove(&key).and_then(|e| e.1);
+            self.commits.insert(key.clone(), (Instant::now(), known));
+            {
+                let (tx, site, ctx, sha) = (self.commit_tx.clone(), site.clone(), ctx.clone(), sha.to_string());
+                std::thread::spawn(move || {
+                    // A hosting that refuses (no rights, no such commit there) has nothing to show.
+                    let _ = tx.send((key, commit_requests(&site, &sha).unwrap_or_default()));
+                    ctx.request_repaint();
+                });
+            }
+        }
+        self.commits.get(&(site.id(), sha.to_string())).and_then(|e| e.1.as_deref())
+    }
+
+    /// Fill in the requests of a commit without asking the hosting (screenshots).
+    pub fn put_commit(&mut self, site: &Site, sha: &str, list: Vec<Request>) {
+        self.commits.insert((site.id(), sha.to_string()), (Instant::now(), Some(list)));
+    }
+
     /// What is known already, without starting anything.
     pub fn known(&self, site: &Site) -> Option<&Info> {
         self.map.get(&site.id()).and_then(|e| e.info.as_ref())
@@ -729,11 +786,14 @@ impl Cache {
         for e in self.map.values_mut() {
             e.stale = true;
         }
+        // The requests of commits are read again as well: one may have been merged.
+        self.commits.retain(|_, e| e.1.is_none());
     }
 
     /// Drop what was read with other tokens.
     pub fn clear(&mut self) {
         self.map.clear();
+        self.commits.clear();
     }
 
     /// Fill in a repository without asking the hosting (screenshots, a request just created).
@@ -890,6 +950,23 @@ mod tests {
         assert_eq!(branch_requests_url(&gl, "A", "feature/x"), "A/merge_requests?state=all&source_branch=feature%2Fx&order_by=updated_at&per_page=100");
         let bb = site("git@bitbucket.org:team/app.git");
         assert_eq!(branch_requests_url(&bb, "A", "fix\"1"), "A/pullrequests?state=OPEN&state=MERGED&state=DECLINED&state=SUPERSEDED&q=source.branch.name%3D%22fix%5C%221%22&sort=-updated_on&pagelen=50");
+    }
+
+    #[test]
+    fn asks_for_the_requests_of_a_commit() {
+        assert_eq!(commit_requests_url(&site("git@github.com:octo/site.git"), "A", "abc123"), "A/commits/abc123/pulls?per_page=30");
+        assert_eq!(commit_requests_url(&site("git@gitlab.com:g/r.git"), "A", "abc123"), "A/repository/commits/abc123/merge_requests");
+        assert_eq!(commit_requests_url(&site("git@bitbucket.org:team/app.git"), "A", "abc123"), "A/commit/abc123/pullrequests?pagelen=30");
+        // Nothing is asked in a test, and a commit filled in by hand is given back.
+        let s = Site { token: "t".into(), ..site("git@gitlab.com:g/r.git") };
+        let mut cache = Cache::default();
+        let ctx = eframe::egui::Context::default();
+        assert!(cache.commit_requests(&s, "abc", &ctx).is_none());
+        cache.put_commit(&s, "abc", vec![Request { number: "7".into(), fate: Fate::Merged, ..Default::default() }]);
+        assert_eq!(cache.commit_requests(&s, "abc", &ctx).map(|l| l.len()), Some(1));
+        assert!(cache.commit_requests(&s, "def", &ctx).is_none());
+        cache.clear();
+        assert!(cache.commit_requests(&s, "abc", &ctx).is_none());
     }
 
     #[test]

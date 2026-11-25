@@ -197,8 +197,29 @@ impl App {
         // A request shows at its top commit and at the commits that are in its branch but not
         // yet in the branch it goes into.
         let has = |b: &str| containing.iter().any(|c| *c == format!("{remote}/{b}"));
-        let requests = info.requests.iter().filter(|r| r.sha == hash || has(&r.source) && !has(&r.target)).take(3).cloned().collect();
-        Some(CommitHosting { ci: info.ci.get(hash).cloned(), requests, error: info.error.clone(), site })
+        let open: Vec<Request> = info.requests.iter().filter(|r| r.sha == hash || has(&r.source) && !has(&r.target)).take(3).cloned().collect();
+        let (ci, error) = (info.ci.get(hash).cloned(), info.error.clone());
+        // The requests the commit itself came in with, merged and closed ones too. Asked of
+        // the hosting only once the commit has stayed selected for a moment, so that walking
+        // down the log with the arrow keys does not ask about every commit passed.
+        if self.request_probe.as_ref().is_none_or(|p| p.0 != hash) {
+            self.request_probe = Some((hash.to_string(), std::time::Instant::now()));
+        }
+        let waited = self.screenshot.is_some() || self.request_probe.as_ref().is_some_and(|p| p.1.elapsed().as_millis() >= 400);
+        let mut requests: Vec<Request> = if waited {
+            self.hosting.commit_requests(&site, hash, ctx).map(|l| l.to_vec()).unwrap_or_default()
+        } else {
+            ctx.request_repaint_after(std::time::Duration::from_millis(420));
+            vec![]
+        };
+        for r in open {
+            if !requests.iter().any(|x| x.number == r.number) {
+                requests.push(r);
+            }
+        }
+        crate::hosting::sort_requests(&mut requests);
+        requests.truncate(6);
+        Some(CommitHosting { ci, requests, error, site })
     }
 
     /// "Open on …" for a commit, in its menu.
@@ -704,15 +725,26 @@ pub fn commit_rows(ui: &mut Ui, h: &CommitHosting) {
         });
     }
     for r in &h.requests {
+        ui.add_space(2.0);
+        // What became of it, its number (a link) and its title; under them the branches,
+        // who opened it and when it was merged or last changed.
+        let (word, col) = fate_badge(r);
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 8.0;
+            ui.label(RichText::new(word).size(12.0).strong().color(col));
             let label = format!("{} {}{}", tr(h.site.kind.request()), h.site.kind.sign(), r.number);
-            ui.add(egui::Hyperlink::from_label_and_url(RichText::new(label).size(12.0).color(theme::LINK()), &r.url)).on_hover_text(format!("{} → {}\n{}\n{}", r.source, r.target, r.author, r.url));
-            if r.draft {
-                ui.label(RichText::new(tr("draft")).size(11.5).color(theme::TEXT_DIM()));
-            }
-            ui.add(egui::Label::new(RichText::new(&r.title).size(12.0).color(theme::TEXT_MID())).truncate());
+            ui.add(egui::Hyperlink::from_label_and_url(RichText::new(label).size(12.0).color(theme::LINK()), &r.url)).on_hover_text(&r.url);
+            ui.add(egui::Label::new(RichText::new(&r.title).size(12.0).color(theme::TEXT_MID())).truncate()).on_hover_text(&r.title);
         });
+        let mut line = format!("{} → {}", r.source, r.target);
+        if !r.author.is_empty() {
+            line.push_str(&format!("  ·  {}", r.author));
+        }
+        if r.when > 0 {
+            let what = if r.fate == Fate::Merged { tr("merged") } else { tr("changed") };
+            line.push_str(&format!("  ·  {what} {}", crate::app::format_date(r.when)));
+        }
+        ui.add(egui::Label::new(RichText::new(line).size(11.5).color(theme::TEXT_DIM())).wrap()).on_hover_text(if r.when > 0 { crate::app::format_full_date(r.when) } else { String::new() });
     }
     if let Some(e) = &h.error {
         ui.add(egui::Label::new(RichText::new(format!("{}: {e}", h.site.kind.name())).size(12.0).color(theme::RED())).wrap())

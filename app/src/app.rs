@@ -884,6 +884,8 @@ pub struct App {
     pub secrets_note: Option<String>,
     /// Looking for a newer version of the program.
     pub update: crate::update_view::State,
+    /// The commit whose pull requests the details are about to ask the hosting for, and since when.
+    pub request_probe: Option<(String, Instant)>,
     /// The window with all the pull requests of a branch.
     pub branch_requests: Option<crate::hosting_view::BranchRequests>,
     /// The Create Pull Request window.
@@ -1029,6 +1031,7 @@ impl App {
             hosting: Default::default(),
             new_request: None,
             branch_requests: None,
+            request_probe: None,
             update: Default::default(),
             secrets_tx,
             secrets_rx,
@@ -1469,6 +1472,14 @@ impl App {
                         if let Some(h) = tip("origin/stage") {
                             info.requests.push(Request { number: "131".into(), title: "Release candidate from stage".into(), url: format!("{web}/merge_requests/131"), source: "stage".into(), target: "master".into(), sha: h, author: "alex.morgan".into(), draft: true, ..Default::default() });
                         }
+                    }
+                    // The selected commit came in with a request that is merged already, and is in the open one.
+                    if let Some(h) = shown.and_then(|i| app.repo.as_ref().map(|r| r.commits[i].hash.clone())) {
+                        let day = chrono::Local::now().timestamp() - 4 * 86400;
+                        let merged = Request { number: "122".into(), title: "APP-1220 [fix] Guard the paid form against an empty order".into(), url: format!("{web}/merge_requests/122"), source: MR_DEMO_BRANCH.trim_start_matches("origin/").into(), target: "stage".into(), author: "sam.patel".into(), fate: crate::hosting::Fate::Merged, when: day, ..Default::default() };
+                        let mut list = info.requests.iter().filter(|r| r.number == "128").cloned().collect::<Vec<_>>();
+                        list.push(merged);
+                        app.hosting.put_commit(&site, &h, list);
                     }
                     app.hosting.put(&site, info);
                     if view.contains("mrlist") {
