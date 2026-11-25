@@ -1290,12 +1290,16 @@ impl App {
                     app.settings.jira_on = true;
                     app.settings.jira_url = "https://jira.example.com".into();
                     app.settings.jira_token = "NjM4OTk0MzE1NTQ2OkV4YW1wbGVUb2tlbg".into();
-                    app.open_settings(Some(crate::settings_view::Page::Jira));
+                    app.open_settings(Some(crate::settings_view::Page::Hosting));
                     if let Some(d) = app.settings_draft.as_mut() {
                         d.jira_check = Some(Ok("Connected as Alex Morgan".into()));
                     }
                 } else if view.contains("hostpage") {
                     use crate::hosting::{Account, Kind};
+                    // JIRA is a row of the same list.
+                    app.settings.jira_on = true;
+                    app.settings.jira_url = "https://jira.example.com".into();
+                    app.settings.jira_token = "example-token-not-a-real-one".into();
                     app.settings.hosting = vec![
                         Account { kind: Kind::GitHub, host: "github.com".into(), token: "example-token-not-a-real-one".into(), ..Default::default() },
                         Account { kind: Kind::GitLab, host: "code.example.com".into(), token: "example-token-not-a-real-one".into(), ..Default::default() },
@@ -1514,7 +1518,7 @@ impl App {
                     let files = ["refbraid-{v}-1.el10.x86_64.rpm", "refbraid-{v}-1.el9.x86_64.rpm", "refbraid_{v}-1_amd64.deb", "refbraid-{v}-x86_64.AppImage", "refbraid-{v}-windows-x64.msi", "refbraid-{v}-macos-universal.dmg"];
                     app.update.latest = Some(crate::update::Release {
                         url: format!("{base}/tag/v{next}"),
-                        body: "## Downloads\n\n| File | For |\n|---|---|\n| `a` | b |\n\n## What's new\n\n### New\n- **Hostings**: GitHub, GitLab and Bitbucket are recognised by the address of the remote. **Open on …** in the menu of a commit, a branch and a file opens it in the browser.\n- **Create Pull Request…** in the Git menu, in the menu of a branch and in the Push window; with a token in Settings → Hosting the request is created from the program.\n- The result of CI is shown before each commit in the Log and in the commit details.\n- Help → **Check for Updates…**: the program tells when a newer version is published.\n\n### Fixed\n- On macOS the shortcuts are shown with its own keys (`⌘K`, `⌥⌘A`).\n".into(),
+                        body: "## Downloads\n\n| File | For |\n|---|---|\n| `a` | b |\n\n## What's new\n\n### New\n- **Hostings**: GitHub, GitLab and Bitbucket are recognised by the address of the remote. **Open on …** in the menu of a commit, a branch and a file opens it in the browser.\n- **Create Pull Request…** in the Git menu, in the menu of a branch and in the Push window; with a token in Settings → Integrations the request is created from the program.\n- The result of CI is shown before each commit in the Log and in the commit details.\n- Help → **Check for Updates…**: the program tells when a newer version is published.\n\n### Fixed\n- On macOS the shortcuts are shown with its own keys (`⌘K`, `⌥⌘A`).\n".into(),
                         assets: files.iter().map(|f| f.replace("{v}", &next)).map(|f| (f.clone(), format!("{base}/download/v{next}/{f}"))).collect(),
                         version: next,
                     });

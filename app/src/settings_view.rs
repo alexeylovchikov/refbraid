@@ -17,7 +17,6 @@ pub enum Page {
     Commit,
     MergeConflicts,
     IssueNavigation,
-    Jira,
     Hosting,
     Log,
     Git,
@@ -40,8 +39,7 @@ impl Page {
             Page::Commit => "Commit Messages",
             Page::MergeConflicts => "Merge Conflicts",
             Page::IssueNavigation => "Issue Navigation",
-            Page::Jira => "JIRA",
-            Page::Hosting => "Hosting",
+            Page::Hosting => "Integrations",
             Page::Log => "Log",
             Page::Git => "Git",
             Page::BranchPrefixes => "Branch Prefixes",
@@ -57,7 +55,7 @@ impl Page {
     fn group_en(self) -> &'static str {
         match self {
             Page::Window | Page::Keymap => "Appearance",
-            Page::IssueNavigation | Page::Jira | Page::Hosting | Page::Log | Page::Git | Page::BranchPrefixes | Page::Credentials => "Version Control",
+            Page::IssueNavigation | Page::Hosting | Page::Log | Page::Git | Page::BranchPrefixes | Page::Credentials => "Version Control",
             // Everything the AI agent does: which agent, commit messages, resolving conflicts.
             Page::AiAgents | Page::Commit | Page::MergeConflicts => "AI",
             Page::ExternalTools | Page::OpenFiles | Page::FileManager => "Tools",
@@ -72,8 +70,7 @@ impl Page {
             Page::Commit => "ai assistant prompt commit message generation",
             Page::MergeConflicts => "conflict merge resolve ai prompt rules skill skills claude codex SKILL.md",
             Page::IssueNavigation => "jira issue tracker link pattern regex regular expression highlight",
-            Page::Jira => "jira atlassian issue status token personal access api server cloud tracker",
-            Page::Hosting => "hosting github gitlab bitbucket pull request merge request token ci pipeline checks host",
+            Page::Hosting => "integrations hosting github gitlab bitbucket pull request merge request token ci pipeline checks host jira atlassian issue status personal access api server cloud tracker",
             Page::Log => "sort topological date first parent merges commits limit history",
             Page::Git => "executable path program refresh automatic",
             Page::BranchPrefixes => "branch prefix feature release hotfix bugfix support new branch name",
@@ -85,11 +82,10 @@ impl Page {
     }
 }
 
-const PAGES: [Page; 15] = [
+const PAGES: [Page; 14] = [
     Page::Window,
     Page::Keymap,
     Page::IssueNavigation,
-    Page::Jira,
     Page::Hosting,
     Page::BranchPrefixes,
     Page::Log,
@@ -431,7 +427,6 @@ impl App {
                 Page::Keymap => self.page_keymap(ui),
                 Page::Credentials => self.page_credentials(ui),
                 Page::IssueNavigation => self.page_issues(ui),
-                Page::Jira => self.page_jira(ui),
                 Page::Hosting => self.page_hosting(ui),
                 Page::Log => self.page_log(ui),
                 Page::Commit => self.page_commit(ui),
@@ -1243,86 +1238,101 @@ impl App {
             .on_hover_text(tr("Your changes are put aside (stash), the branch is switched and the changes are applied again. When this is off, RefBraid asks what to do."));
     }
 
-    fn page_jira(&mut self, ui: &mut Ui) {
+    /// JIRA in the list of Settings → Integrations: a row like the ones of the hostings. It is
+    /// there while the statuses of issues are shown; removing the row turns them off.
+    pub fn jira_row(&mut self, ui: &mut Ui) {
         let Some(d) = self.settings_draft.as_mut() else { return };
-        ui.label(
-            RichText::new(tr("Show the status of JIRA issues in the commit details. Issue keys (ABC-123) are taken from the commit message, or, when it has none, from the names of the branches that contain the commit."))
-                .color(theme::TEXT_MID()),
-        );
-        ui.add_space(10.0);
-        ui.checkbox(&mut d.s.jira_on, tr("Show issue statuses from JIRA"));
-        ui.add_space(8.0);
-        if let Some(n) = &self.secrets_note {
-            ui.add(egui::Label::new(RichText::new(n).color(theme::STAR()).size(12.0)).wrap());
-            ui.add_space(8.0);
+        if !d.s.jira_on {
+            return;
         }
         let mut changed = false;
-        ui.add_enabled_ui(d.s.jira_on, |ui| {
-            egui::Grid::new("jira_grid").num_columns(2).spacing(vec2(12.0, 8.0)).show(ui, |ui| {
-                let w = (ui.available_width() - 150.0).clamp(200.0, 460.0);
-                ui.label("Server URL:");
-                let r = ui.add(egui::TextEdit::singleline(&mut d.s.jira_url).hint_text(tr("https://jira.example.com")).desired_width(w));
-                changed |= r.changed();
-                // The saved token belongs to the server it was entered for.
-                if r.changed() && (!d.s.jira_token.is_empty() || d.s.jira_kept != crate::secrets::Kept::File) {
-                    d.s.jira_token.clear();
-                    d.s.jira_kept = crate::secrets::Kept::File;
-                }
-                theme::edit_menu(r);
-                ui.end_row();
-                ui.label("Token:");
-                ui.horizontal(|ui| {
-                    // Write only: a saved token is never shown, a new one replaces it.
-                    let saved = !d.s.jira_token.is_empty() || d.s.jira_kept != crate::secrets::Kept::File;
-                    let hint = if saved { tr("saved — type to replace") } else { tr("personal access token") };
-                    let r = ui.add(egui::TextEdit::singleline(&mut d.jira_entered).password(true).hint_text(hint).desired_width(w - 70.0));
-                    changed |= r.changed();
-                    theme::edit_menu(r);
-                    if ui.add_enabled(saved, egui::Button::new(tr("Forget")).min_size(vec2(62.0, 20.0))).on_hover_text(tr("Remove the saved token")).clicked() {
-                        d.s.jira_token.clear();
-                        d.jira_entered.clear();
-                        d.s.jira_kept = crate::secrets::Kept::File;
-                        changed = true;
+        let mut check = false;
+        let mut remove = false;
+        // The row turned into a row of a hosting.
+        let mut to_kind: Option<crate::hosting::Kind> = None;
+        let busy = d.jira_wait.is_some();
+        ui.horizontal(|ui| {
+            egui::ComboBox::from_id_salt("hosting_kind_jira").width(96.0).selected_text("JIRA").show_ui(ui, |ui| {
+                for k in crate::hosting::KINDS {
+                    if ui.selectable_label(false, k.name()).clicked() {
+                        to_kind = Some(k);
                     }
-                });
-                ui.end_row();
-                ui.label("E-mail:");
-                let r = ui.add(egui::TextEdit::singleline(&mut d.s.jira_email).hint_text(tr("only for Jira Cloud")).desired_width(w));
-                changed |= r.changed();
-                theme::edit_menu(r);
-                ui.end_row();
+                }
+                let _ = ui.selectable_label(true, "JIRA");
             });
-            ui.add_space(4.0);
-            ui.label(
-                RichText::new(tr("JIRA Server / Data Center: create a personal access token in your profile (Profile → Personal Access Tokens) and leave E-mail empty. Jira Cloud: create an API token at id.atlassian.com and enter the e-mail of your account. The token is kept in the password store of the system and is not shown again once saved; where there is no such store it is kept in the settings file."))
-                    .color(theme::TEXT_DIM())
-                    .size(12.0),
+            let r = ui.add(egui::TextEdit::singleline(&mut d.s.jira_url).hint_text(tr("https://jira.example.com")).desired_width(190.0));
+            changed |= r.changed();
+            // The saved token belongs to the server it was entered for.
+            if r.changed() && (!d.s.jira_token.is_empty() || d.s.jira_kept != crate::secrets::Kept::File) {
+                d.s.jira_token.clear();
+                d.s.jira_kept = crate::secrets::Kept::File;
+            }
+            theme::edit_menu(r);
+            // Write only: a saved token is never shown, a new one replaces it.
+            let saved = !d.s.jira_token.is_empty() || d.s.jira_kept != crate::secrets::Kept::File;
+            let hint = if saved { tr("saved — type to replace") } else { tr("access token") };
+            let r = ui.add(egui::TextEdit::singleline(&mut d.jira_entered).password(true).hint_text(hint).desired_width(186.0));
+            changed |= r.changed();
+            theme::edit_menu(r);
+            if ui.add_enabled(!busy, egui::Button::new(tr("Test"))).on_hover_text(tr("Sign in with the token and say whose it is")).clicked() {
+                check = true;
+            }
+            if saved && ui.button(tr("Forget")).on_hover_text(tr("Remove the saved token")).clicked() {
+                d.s.jira_token.clear();
+                d.jira_entered.clear();
+                d.s.jira_kept = crate::secrets::Kept::File;
+                changed = true;
+            }
+            if ui.button("✕").on_hover_text(tr("Remove JIRA: the statuses of issues are no longer shown")).clicked() {
+                remove = true;
+            }
+            theme::help_mark(
+                ui,
+                &format!(
+                    "{}\n\n{}\n\n{}",
+                    tr("Shows the status of JIRA issues in the commit details. Issue keys (ABC-123) are taken from the commit message, or, when it has none, from the names of the branches that contain the commit."),
+                    tr("JIRA Server / Data Center: create a personal access token in your profile (Profile → Personal Access Tokens) and leave the e-mail empty. Jira Cloud: create an API token at id.atlassian.com and enter the e-mail of your account."),
+                    tr(crate::hosting_view::TOKEN_HELP)
+                ),
             );
-            ui.add_space(10.0);
-            ui.horizontal(|ui| {
-                let busy = d.jira_wait.is_some();
-                if ui.add_enabled(!busy, egui::Button::new(tr("Test Connection"))).clicked() {
-                    let mut s = d.s.clone();
-                    if !d.jira_entered.trim().is_empty() {
-                        s.jira_token = d.jira_entered.trim().to_string();
-                    }
-                    s.jira_on = true;
-                    let cfg = crate::jira::Config::from(&s).unwrap_or_default();
-                    let (tx, rx) = std::sync::mpsc::channel();
-                    let ctx = ui.ctx().clone();
-                    std::thread::spawn(move || {
-                        let _ = tx.send(crate::jira::test(&cfg));
-                        ctx.request_repaint();
-                    });
-                    d.jira_wait = Some(rx);
-                    d.jira_check = None;
-                }
-                if busy {
-                    ui.spinner();
-                    ui.label(RichText::new(tr("Connecting…")).color(theme::TEXT_MID()));
-                }
-            });
         });
+        ui.horizontal(|ui| {
+            ui.add_space(104.0);
+            let r = ui.add(egui::TextEdit::singleline(&mut d.s.jira_email).hint_text(tr("Atlassian account e-mail (only for Jira Cloud)")).desired_width(384.0));
+            changed |= r.changed();
+            theme::edit_menu(r);
+        });
+        if let Some(kind) = to_kind {
+            let host = crate::hosting_view::host_of_url(&d.s.jira_url);
+            d.s.hosting.push(crate::hosting::Account { kind, host, entered: std::mem::take(&mut d.jira_entered), ..Default::default() });
+            remove = true;
+        }
+        if remove {
+            d.s.jira_on = false;
+            d.s.jira_url.clear();
+            d.s.jira_token.clear();
+            d.s.jira_email.clear();
+            d.s.jira_kept = crate::secrets::Kept::File;
+            d.jira_entered.clear();
+            d.jira_check = None;
+            d.jira_wait = None;
+            return;
+        }
+        if check {
+            let mut s = d.s.clone();
+            if !d.jira_entered.trim().is_empty() {
+                s.jira_token = d.jira_entered.trim().to_string();
+            }
+            let cfg = crate::jira::Config::from(&s).unwrap_or_default();
+            let (tx, rx) = std::sync::mpsc::channel();
+            let ctx = ui.ctx().clone();
+            std::thread::spawn(move || {
+                let _ = tx.send(crate::jira::test(&cfg));
+                ctx.request_repaint();
+            });
+            d.jira_wait = Some(rx);
+            d.jira_check = None;
+        }
         if let Some(rx) = &d.jira_wait {
             if let Ok(r) = rx.try_recv() {
                 d.jira_check = Some(r);
@@ -1332,15 +1342,25 @@ impl App {
         if changed {
             d.jira_check = None;
         }
-        match &d.jira_check {
-            Some(Ok(v)) => {
-                ui.label(RichText::new(format!("✓ {v}")).color(theme::GREEN()));
-            }
-            Some(Err(e)) => {
-                ui.label(RichText::new(format!("Could not connect: {e}")).color(theme::RED()));
-            }
-            None => {}
+        if d.jira_wait.is_some() || d.jira_check.is_some() {
+            ui.horizontal(|ui| {
+                ui.add_space(104.0);
+                if d.jira_wait.is_some() {
+                    ui.spinner();
+                    ui.label(RichText::new(tr("Connecting…")).color(theme::TEXT_MID()));
+                }
+                match &d.jira_check {
+                    Some(Ok(v)) => {
+                        ui.label(RichText::new(format!("✓ {v}")).color(theme::GREEN()));
+                    }
+                    Some(Err(e)) => {
+                        ui.add(egui::Label::new(RichText::new(format!("{}: {e}", tr("Could not connect"))).color(theme::RED())).wrap());
+                    }
+                    None => {}
+                }
+            });
         }
+        ui.add_space(4.0);
     }
 
     fn page_agents(&mut self, ui: &mut Ui) {

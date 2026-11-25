@@ -59,7 +59,7 @@ impl Kind {
     }
 }
 
-/// A host from Settings → Hosting: what runs there and the token to talk to it.
+/// A host from Settings → Integrations: what runs there and the token to talk to it.
 #[derive(Clone, PartialEq, Debug, Default)]
 pub struct Account {
     pub kind: Kind,
@@ -606,7 +606,7 @@ pub fn load(site: &Site) -> Info {
 /// Every request there was out of a branch — open, closed and merged — in the order of
 /// [`sort_requests`]. The last hundred the hosting has (fifty at Bitbucket).
 pub fn branch_requests(site: &Site, branch: &str) -> Result<Vec<Request>, String> {
-    let api = site.repo_api().filter(|_| !site.token.is_empty()).ok_or("no token for this host in Settings → Hosting")?;
+    let api = site.repo_api().filter(|_| !site.token.is_empty()).ok_or("no token for this host in Settings → Integrations")?;
     let mut list = requests_from(site.kind, &site.get(branch_requests_url(site, &api, branch))?);
     // The hosting was asked for this branch; a request from a fork's branch of the same name is not ours.
     list.retain(|r| r.source == branch);
@@ -617,7 +617,7 @@ pub fn branch_requests(site: &Site, branch: &str) -> Result<Vec<Request>, String
 /// The requests a commit came in with, or is waiting in: whatever became of them, in the
 /// order of [`sort_requests`].
 pub fn commit_requests(site: &Site, sha: &str) -> Result<Vec<Request>, String> {
-    let api = site.repo_api().filter(|_| !site.token.is_empty()).ok_or("no token for this host in Settings → Hosting")?;
+    let api = site.repo_api().filter(|_| !site.token.is_empty()).ok_or("no token for this host in Settings → Integrations")?;
     let mut list = requests_from(site.kind, &site.get(commit_requests_url(site, &api, sha))?);
     sort_requests(&mut list);
     Ok(list)
@@ -652,7 +652,7 @@ fn create_body(kind: Kind, title: &str, description: &str, source: &str, target:
 
 /// Create a pull request from one branch of the repository into another.
 pub fn create(site: &Site, title: &str, description: &str, source: &str, target: &str) -> Result<Request, String> {
-    let api = site.repo_api().filter(|_| !site.token.is_empty()).ok_or("no token for this host in Settings → Hosting")?;
+    let api = site.repo_api().filter(|_| !site.token.is_empty()).ok_or("no token for this host in Settings → Integrations")?;
     let url = match site.kind {
         Kind::GitHub => format!("{api}/pulls"),
         Kind::GitLab => format!("{api}/merge_requests"),

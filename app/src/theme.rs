@@ -811,6 +811,20 @@ pub fn paint_clipped(
     w
 }
 
+/// A question mark in a circle that tells more when pointed at: for the explanations that
+/// would otherwise take up a page.
+pub fn help_mark(ui: &mut egui::Ui, text: &str) -> egui::Response {
+    let (r, resp) = ui.allocate_exact_size(egui::vec2(18.0, 18.0), egui::Sense::hover());
+    let col = if resp.hovered() { TEXT() } else { TEXT_DIM() };
+    let p = ui.painter();
+    p.circle_stroke(r.center(), 7.5, egui::Stroke::new(1.3, col));
+    p.text(r.center() + egui::vec2(0.0, 0.5), egui::Align2::CENTER_CENTER, "?", egui::FontId::proportional(12.0), col);
+    resp.on_hover_ui(|ui| {
+        ui.set_max_width(480.0);
+        ui.add(egui::Label::new(egui::RichText::new(text).color(TEXT())).wrap());
+    })
+}
+
 /// Right-click menu for text fields: Cut, Copy, Paste, Select All. Returns the response unchanged.
 pub fn edit_menu(resp: egui::Response) -> egui::Response {
     let r = resp.clone();

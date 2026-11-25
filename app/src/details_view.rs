@@ -662,7 +662,7 @@ fn jira_rows(ui: &mut Ui, cfg: &crate::jira::Config, states: &[(String, crate::j
     // A wrong address or token fails every issue alike: say it once.
     if let Some(e) = states.iter().find_map(|(_, s)| if let State::Failed(e) = s { Some(e) } else { None }) {
         ui.add(egui::Label::new(RichText::new(format!("JIRA: {e}")).size(12.0).color(theme::RED())).wrap())
-            .on_hover_text(tr("Check the address and the token in File → Settings → JIRA"));
+            .on_hover_text(tr("Check the address and the token in File → Settings → Integrations"));
     }
 }
 

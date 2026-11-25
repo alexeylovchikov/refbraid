@@ -34,7 +34,7 @@ Before its first public release the program was developed under the working name
 |---|---|---|
 | ![Commit panel in the light theme](docs/commit-light.png) | ![Side-by-side diff](docs/diff.png) | ![Three-column merge window with search](docs/conflicts.png) |
 
-| CI results in the Log | Create Pull Request | Settings → Hosting |
+| CI results in the Log | Create Pull Request | Settings → Integrations |
 |---|---|---|
 | ![The result of CI before each commit and in the commit details](docs/ci-status.png) | ![The Create Pull Request window](docs/pull-request.png) | ![Hosts and their tokens in the settings](docs/hosting-settings.png) |
 

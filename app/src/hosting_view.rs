@@ -1,4 +1,4 @@
-//! The Git hosting of the open repository in the interface: Settings → Hosting, "Open on …" in
+//! The Git hosting of the open repository in the interface: Settings → Integrations, "Open on …" in
 //! the menus, the pull requests and the result of CI in the commit details and the log, and the
 //! Create Pull Request window.
 
@@ -44,6 +44,38 @@ fn fate_badge(r: &Request) -> (&'static str, Color32) {
         Fate::Closed => (tr("Closed"), theme::RED()),
         Fate::Merged => (tr("Merged"), theme::rgb(0xa8, 0x8b, 0xe8)),
     }
+}
+
+/// The help of a row of Settings → Integrations: what this kind of host needs.
+fn kind_help(kind: Kind) -> &'static str {
+    match kind {
+        Kind::GitHub => "github.com and hosts named github.… are recognised by the address of the remote, so \"Open on GitHub\" needs nothing here. Add the host of a GitHub Enterprise server of your own to say what runs there.\n\nA token shows the open pull requests and the results of CI and creates pull requests from the program. Create a fine-grained token with Pull requests (read and write) and Actions (read), or a classic one with the repo scope.",
+        Kind::GitLab => "gitlab.com and hosts named gitlab.… are recognised by the address of the remote, so \"Open on GitLab\" needs nothing here. Add the host of a GitLab server of your own when it is named otherwise.\n\nA token shows the merge requests and the pipelines and creates merge requests from the program. Create a personal, project or group access token with the api scope.",
+        Kind::Bitbucket => "Only Bitbucket Cloud (bitbucket.org) is supported; \"Open on Bitbucket\" needs nothing here.\n\nA token shows the open pull requests and the pipelines and creates pull requests from the program. Create an API token with the pull request, repository and pipeline scopes and enter the e-mail of your Atlassian account; or use a repository or workspace access token and leave the e-mail empty.",
+    }
+}
+
+/// The end of every such help: where the token goes and where it is kept.
+pub const TOKEN_HELP: &str = "The token is sent only to this host. It is kept in the password store of the system and is not shown again once saved; where there is no such store it is kept in the settings file.";
+
+/// The address of JIRA from what a row held as its host: nothing for the public host of a
+/// hosting (the row was only just added), else with `https://` put before a bare name.
+pub fn jira_url_of(host: &str) -> String {
+    let h = host.trim();
+    if h.is_empty() || KINDS.iter().any(|k| k.public_host() == h) {
+        String::new()
+    } else if h.contains("://") {
+        h.to_string()
+    } else {
+        format!("https://{h}")
+    }
+}
+
+/// The host in the address of JIRA, for a row turned back into a hosting.
+pub fn host_of_url(url: &str) -> String {
+    let u = url.trim();
+    let u = u.split_once("://").map_or(u, |x| x.1);
+    u.split('/').next().unwrap_or("").to_string()
 }
 
 /// What the hosting says about one commit.
@@ -273,7 +305,7 @@ impl App {
         if ui
             .add_enabled(site.connected(), egui::Button::new(all))
             .on_hover_text(tr("Every request there was out of this branch: the ones not merged first, then the merged ones, the latest first"))
-            .on_disabled_hover_text(tr("Needs a token for this host in Settings → Hosting"))
+            .on_disabled_hover_text(tr("Needs a token for this host in Settings → Integrations"))
             .clicked()
         {
             self.open_branch_requests(ui.ctx(), site.clone(), &branch);
@@ -539,7 +571,7 @@ impl App {
             }
             if !connected {
                 ui.add_space(6.0);
-                ui.add(egui::Label::new(RichText::new(trf("There is no token for {} in Settings → Hosting, so the request is finished on the page of the hosting in the browser.", &[&f.site.host])).color(theme::TEXT_MID()).size(12.0)).wrap());
+                ui.add(egui::Label::new(RichText::new(trf("There is no token for {} in Settings → Integrations, so the request is finished on the page of the hosting in the browser.", &[&f.site.host])).color(theme::TEXT_MID()).size(12.0)).wrap());
                 return;
             }
             ui.add_space(10.0);
@@ -574,20 +606,20 @@ impl App {
         }
     }
 
-    /// Settings → Hosting.
+    /// Settings → Integrations: the Git hostings, then JIRA.
     pub fn page_hosting(&mut self, ui: &mut Ui) {
         let Some(d) = self.settings_draft.as_mut() else { return };
-        ui.label(
-            RichText::new(tr("GitHub, GitLab and Bitbucket are recognised by the address of the remote: github.com, gitlab.com, bitbucket.org and hosts named gitlab.… or github.… need nothing here for \"Open on …\". Add a host to say what runs on a server of your own, and enter a token to see the open pull requests and the results of CI and to create pull requests from the program."))
-                .color(theme::TEXT_MID()),
-        );
-        ui.add_space(10.0);
+        ui.label(RichText::new(tr("Hostings")).strong().color(theme::TEXT()));
+        ui.add_space(6.0);
         if let Some(n) = &self.secrets_note {
             ui.add(egui::Label::new(RichText::new(n).color(theme::STAR()).size(12.0)).wrap());
             ui.add_space(8.0);
         }
         let mut remove: Option<usize> = None;
         let mut check: Option<usize> = None;
+        // A row turned into the row of JIRA (there is one JIRA, so only while it has no row).
+        let mut to_jira: Option<usize> = None;
+        let jira_free = !d.s.jira_on;
         let busy = d.host_wait.is_some();
         for (i, a) in d.s.hosting.iter_mut().enumerate() {
             let mut changed = false;
@@ -597,6 +629,9 @@ impl App {
                 egui::ComboBox::from_id_salt(("hosting_kind", i)).width(96.0).selected_text(a.kind.name()).show_ui(ui, |ui| {
                     for k in KINDS {
                         moved |= ui.selectable_value(&mut a.kind, k, k.name()).changed();
+                    }
+                    if jira_free && ui.selectable_label(false, "JIRA").clicked() {
+                        to_jira = Some(i);
                     }
                 });
                 let r = ui.add(egui::TextEdit::singleline(&mut a.host).hint_text(a.kind.public_host()).desired_width(190.0));
@@ -609,7 +644,7 @@ impl App {
                 }
                 // Write only: a saved token is never shown, a new one replaces it.
                 let hint = if a.has_token() { tr("saved — type to replace") } else { tr("access token") };
-                let r = ui.add(egui::TextEdit::singleline(&mut a.entered).password(true).hint_text(hint).desired_width(210.0));
+                let r = ui.add(egui::TextEdit::singleline(&mut a.entered).password(true).hint_text(hint).desired_width(186.0));
                 changed |= r.changed();
                 theme::edit_menu(r);
                 if ui.add_enabled(!busy, egui::Button::new(tr("Test"))).on_hover_text(tr("Sign in with the token and say whose it is")).clicked() {
@@ -624,11 +659,13 @@ impl App {
                 if ui.button("✕").on_hover_text(tr("Remove this host")).clicked() {
                     remove = Some(i);
                 }
+                // What this kind of host needs: its own help, not everything at once.
+                theme::help_mark(ui, &format!("{}\n\n{}", tr(kind_help(a.kind)), tr(TOKEN_HELP)));
             });
             if a.kind == Kind::Bitbucket {
                 ui.horizontal(|ui| {
                     ui.add_space(104.0);
-                    let r = ui.add(egui::TextEdit::singleline(&mut a.email).hint_text(tr("Atlassian account e-mail (for an API token)")).desired_width(408.0));
+                    let r = ui.add(egui::TextEdit::singleline(&mut a.email).hint_text(tr("Atlassian account e-mail (for an API token)")).desired_width(384.0));
                     changed |= r.changed();
                     theme::edit_menu(r);
                 });
@@ -654,18 +691,18 @@ impl App {
             }
             ui.add_space(4.0);
         }
-        if d.s.hosting.is_empty() {
-            ui.label(RichText::new(tr("No hosts yet.")).color(theme::TEXT_DIM()));
-            ui.add_space(4.0);
+        if let Some(i) = to_jira {
+            let a = d.s.hosting.remove(i);
+            d.host_check = None;
+            d.host_wait = None;
+            d.s.jira_on = true;
+            d.s.jira_url = jira_url_of(&a.host);
+            d.s.jira_token.clear();
+            d.s.jira_kept = crate::secrets::Kept::File;
+            d.s.jira_email = a.email;
+            d.jira_entered = a.entered;
+            d.jira_check = None;
         }
-        ui.horizontal(|ui| {
-            if ui.button(tr("Add Host")).clicked() {
-                // The first one is most likely the public host of the kind not listed yet.
-                let kind = KINDS.into_iter().find(|k| !d.s.hosting.iter().any(|a| a.kind == *k)).unwrap_or_default();
-                let host = if d.s.hosting.iter().any(|a| a.host == kind.public_host()) { String::new() } else { kind.public_host().to_string() };
-                d.s.hosting.push(Account { kind, host, ..Default::default() });
-            }
-        });
         if let Some(i) = remove {
             d.s.hosting.remove(i);
             d.host_check = None;
@@ -698,12 +735,19 @@ impl App {
                 d.host_wait = None;
             }
         }
-        ui.add_space(10.0);
-        ui.label(
-            RichText::new(tr("Tokens. GitHub: a fine-grained token with Pull requests (read and write) and Actions (read), or a classic one with the repo scope. GitLab: a personal, project or group access token with the api scope. Bitbucket Cloud: an API token with the pull request, repository and pipeline scopes together with the e-mail of the account, or a repository or workspace access token without an e-mail. A token is sent only to the host in its row. It is kept in the password store of the system (the keyring on Linux, the Credential Manager on Windows, the Keychain on macOS) and is not shown again once saved; where there is no such store it is kept in the settings file."))
-                .color(theme::TEXT_DIM())
-                .size(12.0),
-        );
+        // JIRA is one more row of the list.
+        self.jira_row(ui);
+        let Some(d) = self.settings_draft.as_mut() else { return };
+        if d.s.hosting.is_empty() && !d.s.jira_on {
+            ui.label(RichText::new(tr("No hosts yet.")).color(theme::TEXT_DIM()));
+            ui.add_space(4.0);
+        }
+        if ui.button(tr("Add Host")).on_hover_text(tr("A row for GitHub, GitLab, Bitbucket or JIRA: choose which in its list")).clicked() {
+            // The first one is most likely the public host of the kind not listed yet.
+            let kind = KINDS.into_iter().find(|k| !d.s.hosting.iter().any(|a| a.kind == *k)).unwrap_or_default();
+            let host = if d.s.hosting.iter().any(|a| a.host == kind.public_host()) { String::new() } else { kind.public_host().to_string() };
+            d.s.hosting.push(Account { kind, host, ..Default::default() });
+        }
     }
 }
 
@@ -748,7 +792,7 @@ pub fn commit_rows(ui: &mut Ui, h: &CommitHosting) {
     }
     if let Some(e) = &h.error {
         ui.add(egui::Label::new(RichText::new(format!("{}: {e}", h.site.kind.name())).size(12.0).color(theme::RED())).wrap())
-            .on_hover_text(tr("Check the host and the token in File → Settings → Hosting"));
+            .on_hover_text(tr("Check the host and the token in File → Settings → Integrations"));
     }
 }
 
@@ -756,6 +800,21 @@ pub fn commit_rows(ui: &mut Ui, h: &CommitHosting) {
 mod tests {
     use super::*;
     use crate::testrepo::TestRepo;
+
+    #[test]
+    fn turns_a_host_into_the_address_of_jira_and_back() {
+        assert_eq!(jira_url_of(" jira.example.com "), "https://jira.example.com");
+        assert_eq!(jira_url_of("http://jira.local:8080/jira"), "http://jira.local:8080/jira");
+        // A row just added holds the public host of a hosting: not the address of any JIRA.
+        assert_eq!(jira_url_of("github.com"), "");
+        assert_eq!(jira_url_of(""), "");
+        assert_eq!(host_of_url("https://jira.example.com/browse"), "jira.example.com");
+        assert_eq!(host_of_url("jira.example.com"), "jira.example.com");
+        assert_eq!(host_of_url(""), "");
+        for k in KINDS {
+            assert!(kind_help(k).contains(k.name()), "{k:?}");
+        }
+    }
 
     #[test]
     fn finds_the_hosting_of_a_real_repository() {
