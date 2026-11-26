@@ -152,7 +152,12 @@ impl App {
             return;
         }
         // Inside an AppImage start the AppImage itself (its mount goes away with this process).
-        let Some(exe) = std::env::var_os("APPIMAGE").map(std::path::PathBuf::from).or_else(|| std::env::current_exe().ok()) else { return };
+        // After an update the running file was replaced: Linux then names it "… (deleted)".
+        let current = std::env::current_exe().ok().map(|p| {
+            let t = p.to_string_lossy();
+            t.strip_suffix(" (deleted)").map(std::path::PathBuf::from).unwrap_or_else(|| p.clone())
+        });
+        let Some(exe) = std::env::var_os("APPIMAGE").map(std::path::PathBuf::from).or(current) else { return };
         let mut c = std::process::Command::new(exe);
         if let Some(r) = &self.repo {
             c.arg(&r.path);

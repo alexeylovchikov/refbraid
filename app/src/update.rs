@@ -1,7 +1,8 @@
 //! Looking for a newer version: the latest release of the program's repository on GitHub, read
 //! without signing in, compared with the running version, and the installer among its files
-//! that suits this computer. Nothing is downloaded or installed here — the file is opened in
-//! the browser.
+//! that suits this computer. On RHEL and the like the package can be downloaded, checked
+//! against the release's SHA256SUMS.txt and installed with dnf through pkexec (the system asks
+//! for the password); elsewhere the file is opened in the browser.
 
 use crate::jira::Json;
 
@@ -143,6 +144,137 @@ pub fn pack() -> Pack {
     linux_pack(&std::fs::read_to_string("/etc/os-release").unwrap_or_default())
 }
 
+/// The list of checksums published with every release.
+pub const SUMS: &str = "SHA256SUMS.txt";
+
+/// The checksum of `name` in a SHA256SUMS.txt ("<hash>  <name>" or "<hash> *<name>").
+pub fn sum_for(sums: &str, name: &str) -> Option<String> {
+    sums.lines().find_map(|l| {
+        let (hash, file) = l.trim().split_once(char::is_whitespace)?;
+        let file = file.trim_start().trim_start_matches('*');
+        (file == name && hash.len() == 64 && hash.chars().all(|c| c.is_ascii_hexdigit())).then(|| hash.to_ascii_lowercase())
+    })
+}
+
+/// The command that installs the downloaded package with the system's own tool, the password
+/// asked by the system (pkexec). Only for the RPMs of RHEL and the like.
+pub fn install_command(pack: Pack, file: &std::path::Path) -> Option<Vec<String>> {
+    match pack {
+        Pack::Rpm(_) => Some(vec!["pkexec".into(), "dnf".into(), "install".into(), "-y".into(), file.display().to_string()]),
+        _ => None,
+    }
+}
+
+/// A program on PATH.
+fn on_path(name: &str) -> bool {
+    std::env::var_os("PATH").is_some_and(|p| std::env::split_paths(&p).any(|d| d.join(name).is_file()))
+}
+
+/// Whether the program can install an update by itself here.
+pub fn can_install(pack: Pack) -> bool {
+    matches!(pack, Pack::Rpm(_)) && on_path("pkexec") && on_path("dnf")
+}
+
+/// A step of installing an update, as the window shows it.
+#[derive(Clone, PartialEq, Debug)]
+pub enum Step {
+    Downloading,
+    Checking,
+    /// pkexec is waiting for the password, then dnf works.
+    Installing,
+    Done,
+    Failed(String),
+}
+
+/// A file name that is safe to put in a folder: what release files are called.
+fn plain_name(name: &str) -> bool {
+    !name.is_empty() && !name.starts_with('.') && name.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_'))
+}
+
+/// The folder the update is downloaded to: in the user's own cache, not in the shared /tmp.
+fn download_dir() -> Option<std::path::PathBuf> {
+    let base = std::env::var_os("XDG_CACHE_HOME").map(std::path::PathBuf::from).filter(|p| p.is_absolute()).or_else(|| crate::git::home_dir().map(|h| h.join(".cache")))?;
+    Some(base.join("refbraid").join("update"))
+}
+
+/// Download `url` into `dest` with curl (following GitHub's redirect to its file storage).
+fn download(url: &str, dest: &std::path::Path) -> Result<(), String> {
+    let mut c = std::process::Command::new("curl");
+    c.args(["-fsSL", "--max-time", "900", "-o"]).arg(dest).arg(url);
+    let out = c.output().map_err(|e| format!("could not run curl: {e}"))?;
+    if out.status.success() {
+        Ok(())
+    } else {
+        let err = String::from_utf8_lossy(&out.stderr).trim().trim_start_matches("curl: ").to_string();
+        Err(if err.is_empty() { "the download failed".into() } else { err })
+    }
+}
+
+fn sha256_of(path: &std::path::Path) -> Result<String, String> {
+    let out = std::process::Command::new("sha256sum").arg(path).output().map_err(|e| format!("could not run sha256sum: {e}"))?;
+    let text = String::from_utf8_lossy(&out.stdout);
+    text.split_whitespace().next().filter(|h| h.len() == 64).map(|h| h.to_ascii_lowercase()).ok_or_else(|| "sha256sum gave no checksum".to_string())
+}
+
+/// What pkexec's and dnf's way of ending means.
+pub fn install_error(code: Option<i32>, stderr: &str) -> String {
+    match code {
+        // pkexec: the password window was closed, or the user may not do this.
+        Some(126) => "the installation was cancelled".into(),
+        Some(127) => "the system did not allow the installation".into(),
+        _ => {
+            let last: Vec<&str> = stderr.lines().map(str::trim).filter(|l| !l.is_empty()).collect();
+            let tail = last[last.len().saturating_sub(3)..].join(" ");
+            if tail.is_empty() { format!("dnf ended with code {}", code.unwrap_or(-1)) } else { tail }
+        }
+    }
+}
+
+/// Download the package of `r` for `pack` and check it against SHA256SUMS.txt: the file ready
+/// to install.
+pub fn prepare(r: &Release, pack: Pack, step: &dyn Fn(Step)) -> Result<std::path::PathBuf, String> {
+    let (Some((name, url)), Some((_, sums_url))) = (r.asset_for(pack), r.assets.iter().find(|(n, _)| n == SUMS)) else {
+        return Err("the release has no package or no checksums for this system".into());
+    };
+    if !plain_name(name) {
+        return Err("the package has an unexpected name".into());
+    }
+    let dir = download_dir().ok_or("no folder to download to")?;
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    step(Step::Downloading);
+    let file = dir.join(name);
+    let sums_file = dir.join(SUMS);
+    let _ = std::fs::remove_file(&file);
+    download(url, &file).and_then(|_| download(sums_url, &sums_file))?;
+    step(Step::Checking);
+    let sums = std::fs::read_to_string(&sums_file).unwrap_or_default();
+    let want = sum_for(&sums, name).ok_or("SHA256SUMS.txt does not list the package")?;
+    if sha256_of(&file)? != want {
+        let _ = std::fs::remove_file(&file);
+        return Err("the downloaded package does not match its checksum".into());
+    }
+    Ok(file)
+}
+
+/// Download the package, check it and install it with the system's tool. Every step is told
+/// through `step`. Runs on a thread.
+pub fn install(r: &Release, pack: Pack, step: &dyn Fn(Step)) {
+    let file = match prepare(r, pack, step) {
+        Ok(f) => f,
+        Err(e) => return step(Step::Failed(e)),
+    };
+    let Some(cmd) = install_command(pack, &file) else { return step(Step::Failed("this system has no installer for it".into())) };
+    step(Step::Installing);
+    match std::process::Command::new(&cmd[0]).args(&cmd[1..]).output() {
+        Ok(out) if out.status.success() => {
+            let _ = std::fs::remove_file(&file);
+            step(Step::Done)
+        }
+        Ok(out) => step(Step::Failed(install_error(out.status.code(), &String::from_utf8_lossy(&out.stderr)))),
+        Err(e) => step(Step::Failed(format!("could not run pkexec: {e}"))),
+    }
+}
+
 impl Release {
     /// The file of the release for a way of installing: found by how its name ends.
     pub fn asset_for(&self, pack: Pack) -> Option<&(String, String)> {
@@ -174,6 +306,34 @@ impl Release {
 
 #[cfg(test)]
 mod tests {
+    /// Against the real releases on GitHub (run by hand: cargo test -- --ignored real_release).
+    #[test]
+    #[ignore]
+    fn downloads_and_checks_a_real_release() {
+        let r = fetch(API).unwrap();
+        let f = prepare(&r, Pack::Rpm(10), &|s| eprintln!("{s:?}")).unwrap();
+        assert!(f.is_file() && std::fs::metadata(&f).unwrap().len() > 1_000_000);
+        let _ = std::fs::remove_file(f);
+    }
+
+    #[test]
+    fn checks_the_package_and_installs_it_with_dnf() {
+        let sums = "0f1e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c4b5a69788796a5b4c3d2e1f0  refbraid-0.6.1-1.el10.x86_64.rpm\nABCDEF0123456789abcdef0123456789abcdef0123456789abcdef0123456789 *refbraid_0.6.1-1_amd64.deb\n";
+        assert_eq!(sum_for(sums, "refbraid-0.6.1-1.el10.x86_64.rpm").as_deref(), Some("0f1e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c4b5a69788796a5b4c3d2e1f0"));
+        assert_eq!(sum_for(sums, "refbraid_0.6.1-1_amd64.deb").as_deref(), Some("abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789"));
+        assert_eq!(sum_for(sums, "refbraid-0.6.1-1.el9.x86_64.rpm"), None);
+        assert_eq!(sum_for("short  a.rpm", "a.rpm"), None);
+        let f = std::path::Path::new("/home/u/.cache/refbraid/update/refbraid-0.6.1-1.el10.x86_64.rpm");
+        assert_eq!(install_command(Pack::Rpm(10), f).unwrap(), vec!["pkexec", "dnf", "install", "-y", "/home/u/.cache/refbraid/update/refbraid-0.6.1-1.el10.x86_64.rpm"]);
+        assert_eq!(install_command(Pack::Deb, f), None);
+        assert_eq!(install_command(Pack::Msi, f), None);
+        assert!(!can_install(Pack::Deb) && !can_install(Pack::Unknown));
+        assert!(plain_name("refbraid-0.6.1-1.el10.x86_64.rpm") && !plain_name("../x.rpm") && !plain_name(".rpm") && !plain_name("a b.rpm"));
+        assert_eq!(install_error(Some(126), ""), "the installation was cancelled");
+        assert_eq!(install_error(Some(1), "Error:\n Problem: conflicting requests\n  - nothing provides libX\n"), "Error: Problem: conflicting requests - nothing provides libX");
+        assert_eq!(install_error(Some(1), ""), "dnf ended with code 1");
+    }
+
     use super::*;
 
     #[test]

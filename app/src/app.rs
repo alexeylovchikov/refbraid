@@ -1564,7 +1564,7 @@ impl App {
                     let v = env!("CARGO_PKG_VERSION");
                     let next = crate::update::version_of(v).map(|[a, b, c]| format!("{a}.{b}.{}", c + 1)).unwrap_or_else(|| "9.9.9".into());
                     let base = format!("https://github.com/{}/releases", crate::update::REPO);
-                    let files = ["refbraid-{v}-1.el10.x86_64.rpm", "refbraid-{v}-1.el9.x86_64.rpm", "refbraid_{v}-1_amd64.deb", "refbraid-{v}-x86_64.AppImage", "refbraid-{v}-windows-x64.msi", "refbraid-{v}-macos-universal.dmg"];
+                    let files = ["SHA256SUMS.txt", "refbraid-{v}-1.el10.x86_64.rpm", "refbraid-{v}-1.el9.x86_64.rpm", "refbraid_{v}-1_amd64.deb", "refbraid-{v}-x86_64.AppImage", "refbraid-{v}-windows-x64.msi", "refbraid-{v}-macos-universal.dmg"];
                     app.update.latest = Some(crate::update::Release {
                         url: format!("{base}/tag/v{next}"),
                         body: "## Downloads\n\n| File | For |\n|---|---|\n| `a` | b |\n\n## What's new\n\n### New\n- **Hostings**: GitHub, GitLab and Bitbucket are recognised by the address of the remote. **Open on …** in the menu of a commit, a branch and a file opens it in the browser.\n- **Create Pull Request…** in the Git menu, in the menu of a branch and in the Push window; with a token in Settings → Integrations the request is created from the program.\n- The result of CI is shown before each commit in the Log and in the commit details.\n- Help → **Check for Updates…**: the program tells when a newer version is published.\n\n### Fixed\n- On macOS the shortcuts are shown with its own keys (`⌘K`, `⌥⌘A`).\n".into(),
@@ -1572,6 +1572,11 @@ impl App {
                         version: next,
                     });
                     app.update.open = true;
+                    if view.contains("dnfupdate") {
+                        // As on RHEL 10 with pkexec and dnf, the installation waiting for the password.
+                        app.update.pack = Some(crate::update::Pack::Rpm(10));
+                        app.update.show_step(crate::update::Step::Installing);
+                    }
                 }
                 if view.contains("welcome") {
                     app.repo = None;

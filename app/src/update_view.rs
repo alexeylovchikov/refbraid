@@ -1,10 +1,11 @@
 //! Help → Check for Updates: the look at GitHub once a day when the program starts, the notice
-//! about a newer version and the window with what is new in it and the file to download.
+//! about a newer version and the window with what is new in it and the file to download — or,
+//! on RHEL and the like, the button that downloads the package and installs it with dnf.
 
 use crate::app::{App, Toast};
 use crate::i18n::{tr, trf};
 use crate::theme;
-use crate::update::{self, Pack, Release};
+use crate::update::{self, Pack, Release, Step};
 use eframe::egui::{self, RichText};
 use std::sync::mpsc::Receiver;
 use std::time::Instant;
@@ -23,6 +24,10 @@ pub struct State {
     pub open: bool,
     /// The program looked by itself since it was started.
     looked: bool,
+    /// Installing the update: the steps from the thread, and the last one.
+    install: Option<(Receiver<Step>, Step)>,
+    /// How the program was installed, when a screenshot shows another way than the real one.
+    pub pack: Option<Pack>,
 }
 
 fn now() -> i64 {
@@ -31,6 +36,14 @@ fn now() -> i64 {
 
 fn open(ui: &egui::Ui, url: &str) {
     ui.ctx().open_url(egui::OpenUrl::new_tab(url));
+}
+
+impl State {
+    /// Show a step of the installation without doing it (screenshots).
+    pub fn show_step(&mut self, step: Step) {
+        let (_, rx) = std::sync::mpsc::channel();
+        self.install = Some((rx, step));
+    }
 }
 
 impl App {
@@ -106,15 +119,40 @@ impl App {
         }
     }
 
+    /// Download the package, check it and install it with dnf, on a thread.
+    fn start_install(&mut self, ctx: &egui::Context, r: Release, pack: Pack) {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let ctx = ctx.clone();
+        std::thread::spawn(move || {
+            update::install(&r, pack, &|step| {
+                let _ = tx.send(step);
+                ctx.request_repaint();
+            });
+        });
+        self.update.install = Some((rx, Step::Downloading));
+    }
+
     pub fn update_window(&mut self, ctx: &egui::Context) {
         if !self.update.open {
             return;
         }
+        if let Some((rx, step)) = self.update.install.as_mut() {
+            while let Ok(s) = rx.try_recv() {
+                *step = s;
+            }
+        }
+        let step = self.update.install.as_ref().map(|(_, s)| s.clone());
+        let busy = matches!(step, Some(Step::Downloading | Step::Checking | Step::Installing));
+        let pack = self.update.pack.unwrap_or_else(update::pack);
+        let can_install = update::can_install(pack) || self.update.pack.is_some();
+        let mut install = false;
+        let mut restart = false;
         let checking = self.update.wait.is_some();
         let found = self.update_found().cloned();
         let latest = self.update.latest.as_ref().map(|r| r.version.clone());
         let error = self.update.error.clone();
-        let asset = found.as_ref().and_then(|r| r.asset_for(update::pack()).cloned());
+        let asset = found.as_ref().and_then(|r| r.asset_for(pack).cloned());
+        let installable = can_install && asset.is_some() && found.as_ref().is_some_and(|r| r.assets.iter().any(|(n, _)| n == update::SUMS));
         let mut keep = true;
         let mut skip = false;
         let mut again = false;
@@ -123,6 +161,12 @@ impl App {
                 if crate::form::button(ui, tr("Close")) {
                     keep = false;
                 }
+                if step == Some(Step::Done) {
+                    if crate::form::primary(ui, tr("Restart RefBraid"), true, false) {
+                        restart = true;
+                    }
+                    return;
+                }
                 let Some(r) = &found else {
                     if !checking && ui.button(tr("Check Again")).clicked() {
                         again = true;
@@ -130,6 +174,14 @@ impl App {
                     return;
                 };
                 match &asset {
+                    Some((_, url)) if installable => {
+                        if crate::form::primary(ui, &trf("Install {}", &[&r.version]), !busy, false) {
+                            install = true;
+                        }
+                        if crate::form::button(ui, tr("Download in the Browser")) {
+                            open(ui, url);
+                        }
+                    }
                     Some((name, url)) => {
                         if crate::form::primary(ui, &trf("Download {}", &[name]), true, false) {
                             open(ui, url);
@@ -173,12 +225,30 @@ impl App {
             ui.label(RichText::new(trf("RefBraid {} is available", &[&r.version])).size(17.0).strong().color(theme::TEXT()));
             ui.label(RichText::new(trf("You have {}.", &[&VERSION])).color(theme::TEXT_MID()));
             ui.add_space(4.0);
-            let how = match (&asset, update::pack()) {
+            let how = match (&asset, pack) {
+                (Some(_), _) if installable => tr("Install downloads the package, checks it against the release's checksums and installs it with dnf. The system asks for your password."),
                 (Some(_), Pack::AppImage) => tr("The file is downloaded by your browser. Put it in place of the old one and make it executable."),
                 (Some(_), _) => tr("The file is downloaded by your browser. Close RefBraid, then install it the way you installed this version."),
                 (None, _) => tr("The release page lists the files for every system."),
             };
             ui.add(egui::Label::new(RichText::new(how).color(theme::TEXT_DIM()).size(12.0)).wrap());
+            // How far the installation got.
+            if let Some(s) = &step {
+                ui.add_space(8.0);
+                let (text, color) = match s {
+                    Step::Downloading => (tr("Downloading the package…").to_string(), theme::TEXT_MID()),
+                    Step::Checking => (tr("Checking the package…").to_string(), theme::TEXT_MID()),
+                    Step::Installing => (tr("Installing — enter your password in the window of the system…").to_string(), theme::TEXT_MID()),
+                    Step::Done => (trf("RefBraid {} is installed. Restart the program to use it.", &[&r.version]), theme::GREEN()),
+                    Step::Failed(e) => (format!("{}: {}", tr("Could not install"), tr(e)), theme::RED()),
+                };
+                ui.horizontal_wrapped(|ui| {
+                    if busy {
+                        ui.spinner();
+                    }
+                    ui.add(egui::Label::new(RichText::new(text).color(color)).wrap());
+                });
+            }
             ui.add_space(8.0);
             theme::hline(ui, ui.cursor().top(), ui.max_rect().left(), ui.max_rect().right());
             ui.add_space(8.0);
@@ -186,6 +256,19 @@ impl App {
         });
         if again {
             self.start_update_check(ctx, true);
+        }
+        if install {
+            if let Some(r) = found.clone() {
+                if self.update.pack.is_some() {
+                    // A screenshot: nothing is downloaded, the step is only shown.
+                    self.update.show_step(Step::Installing);
+                } else {
+                    self.start_install(ctx, r, pack);
+                }
+            }
+        }
+        if restart {
+            self.restart(ctx);
         }
         if skip {
             if let Some(r) = &found {
@@ -197,6 +280,10 @@ impl App {
         if !keep || closed {
             self.update.open = false;
             self.update.error = None;
+            // A finished or failed installation is forgotten; one in progress goes on.
+            if !busy {
+                self.update.install = None;
+            }
         }
     }
 }

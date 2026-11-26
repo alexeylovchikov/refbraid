@@ -76,8 +76,9 @@ Before its first public release the program was developed under the working name
   of your system (the keyring on Linux, the Credential Manager on Windows, the Keychain on
   macOS), not in the settings file, and are not shown again once saved.
 - **Updates** — once a day at start the program asks GitHub whether a newer release is
-  published and offers the installer for your system; the download itself is done by your
-  browser. Nothing about you or your repositories is sent. Settings → Window turns it off;
+  published and offers the installer for your system. On RHEL and the like it downloads the
+  RPM, checks its checksum and installs it with dnf (the system asks for the password);
+  elsewhere the download is done by your browser. Nothing about you or your repositories is sent. Settings → Window turns it off;
   Help → Check for Updates looks at any time.
 - **Comfort** — several repositories as tabs, light and dark themes, a keymap you can change,
   a command palette, English and Russian interface.
