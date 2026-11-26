@@ -1597,6 +1597,10 @@ impl App {
             self.tab = Tab::Log;
             return;
         }
+        if self.diffs[i].edit.is_some() {
+            self.edit_tab(ui, i);
+            return;
+        }
         if self.diffs[i].diff.images.is_some() {
             crate::image_view::image_tab(ui, &mut self.diffs[i]);
             return;
@@ -1696,6 +1700,9 @@ impl App {
                         ui.label(RichText::new(&d.subtitle).color(theme::TEXT_MID()));
                         let n = d.diff.unified.len();
                         ui.label(RichText::new(format!("{n} {}", crate::i18n::plural(n, "line", "lines"))).color(theme::TEXT_DIM()).size(12.0));
+                        if let Some(why) = &d.read_only {
+                            ui.label(RichText::new(tr("read only")).color(theme::TEXT_DIM()).size(12.0)).on_hover_text(why.as_str());
+                        }
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             if theme::icon_button_sized(ui, Icon::Search, &format!("{}  ({})", tr("Find in the file"), crate::keymap::shown("Ctrl+F")), 24.0, d.find.is_some(), true).clicked() {
                                 d.find = if d.find.is_some() { None } else { Some(crate::find::Find { focus: true, ..Default::default() }) };

@@ -13,7 +13,7 @@ use crate::theme::{self, Icon};
 use eframe::egui::{self, Color32, FontId, Rect, RichText, Sense, Stroke, Ui, pos2, vec2};
 use std::time::Instant;
 
-const LH: f32 = 18.0;
+pub(crate) const LH: f32 = 18.0;
 const GUT: f32 = 34.0;
 const NUM: f32 = 38.0;
 const C_CONFLICT: Color32 = Color32::from_rgb(0x4a, 0x2f, 0x30);
@@ -53,15 +53,15 @@ fn take(c: &mut merge::Chunk, t: Take) {
 }
 
 /// A found piece of text to mark: (line of the block, from, to, the current one), in characters.
-type Mark = (usize, usize, usize, bool);
+pub(crate) type Mark = (usize, usize, usize, bool);
 
 /// How a block of text is drawn: the file it belongs to (its language; empty = no colouring),
 /// what the lines above left open, and the found text.
 #[derive(Clone, Copy)]
-struct Look<'a> {
-    path: &'a str,
-    st: syntax::State,
-    marks: &'a [Mark],
+pub(crate) struct Look<'a> {
+    pub path: &'a str,
+    pub st: syntax::State,
+    pub marks: &'a [Mark],
 }
 
 type JobKey<'a> = (&'a str, Color32, &'a str, syntax::State, &'a [Mark]);
@@ -98,7 +98,7 @@ fn end_state(ctx: &egui::Context, text: &str, path: &str, st: syntax::State) -> 
     ctx.memory_mut(|m| m.caches.cache::<egui::cache::FrameCache<syntax::State, EndState>>().get((text, path, st)).clone())
 }
 
-fn cached_job(ctx: &egui::Context, text: &str, base: Color32, look: Look) -> egui::text::LayoutJob {
+pub(crate) fn cached_job(ctx: &egui::Context, text: &str, base: Color32, look: Look) -> egui::text::LayoutJob {
     ctx.memory_mut(|m| m.caches.cache::<egui::cache::FrameCache<egui::text::LayoutJob, JobMaker>>().get((text, base, look.path, look.st, look.marks)).clone())
 }
 

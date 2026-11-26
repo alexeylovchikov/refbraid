@@ -147,6 +147,10 @@ pub struct SettingsDraft {
 impl App {
     /// Start a new copy of the program on the same repository and close this one.
     pub fn restart(&mut self, ctx: &egui::Context) {
+        if self.unsaved_anywhere() {
+            self.notify(crate::app::Toast { title: crate::i18n::tr("Save the edited files first").into(), text: crate::i18n::tr("A file edited in a tab has changes that are not saved.").into(), ok: false, at: std::time::Instant::now() });
+            return;
+        }
         // Inside an AppImage start the AppImage itself (its mount goes away with this process).
         let Some(exe) = std::env::var_os("APPIMAGE").map(std::path::PathBuf::from).or_else(|| std::env::current_exe().ok()) else { return };
         let mut c = std::process::Command::new(exe);

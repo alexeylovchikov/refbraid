@@ -832,37 +832,40 @@ pub fn help_mark(ui: &mut egui::Ui, text: &str) -> egui::Response {
 /// Right-click menu for text fields: Cut, Copy, Paste, Select All. Returns the response unchanged.
 pub fn edit_menu(resp: egui::Response) -> egui::Response {
     let r = resp.clone();
-    resp.context_menu(|ui| {
-        let mut cmd = None;
-        if ui.button(tr("Cut")).clicked() {
-            cmd = Some(egui::ViewportCommand::RequestCut);
-        }
-        if ui.button(tr("Copy")).clicked() {
-            cmd = Some(egui::ViewportCommand::RequestCopy);
-        }
-        if ui.button(tr("Paste")).clicked() {
-            cmd = Some(egui::ViewportCommand::RequestPaste);
-        }
-        ui.separator();
-        if ui.button(tr("Select All")).clicked() {
-            if let Some(mut st) = egui::TextEdit::load_state(ui.ctx(), r.id) {
-                let all = egui::text::CCursorRange::two(
-                    egui::text::CCursor::new(0),
-                    egui::text::CCursor::new(usize::MAX / 2),
-                );
-                st.cursor.set_char_range(Some(all));
-                st.store(ui.ctx(), r.id);
-            }
-            r.request_focus();
-            ui.close();
-        }
-        if let Some(c) = cmd {
-            r.request_focus();
-            ui.ctx().send_viewport_cmd(c);
-            ui.close();
-        }
-    });
+    resp.context_menu(|ui| edit_menu_items(ui, &r));
     r
+}
+
+/// Cut, Copy, Paste and Select All for the text field `r`, in a menu that may have more.
+pub fn edit_menu_items(ui: &mut egui::Ui, r: &egui::Response) {
+    let mut cmd = None;
+    if ui.button(tr("Cut")).clicked() {
+        cmd = Some(egui::ViewportCommand::RequestCut);
+    }
+    if ui.button(tr("Copy")).clicked() {
+        cmd = Some(egui::ViewportCommand::RequestCopy);
+    }
+    if ui.button(tr("Paste")).clicked() {
+        cmd = Some(egui::ViewportCommand::RequestPaste);
+    }
+    ui.separator();
+    if ui.button(tr("Select All")).clicked() {
+        if let Some(mut st) = egui::TextEdit::load_state(ui.ctx(), r.id) {
+            let all = egui::text::CCursorRange::two(
+                egui::text::CCursor::new(0),
+                egui::text::CCursor::new(usize::MAX / 2),
+            );
+            st.cursor.set_char_range(Some(all));
+            st.store(ui.ctx(), r.id);
+        }
+        r.request_focus();
+        ui.close();
+    }
+    if let Some(c) = cmd {
+        r.request_focus();
+        ui.ctx().send_viewport_cmd(c);
+        ui.close();
+    }
 }
 
 #[cfg(test)]

@@ -1,5 +1,5 @@
 //! The Files panel — the tree of the files git tracks in the checked-out branch — and the tab
-//! a file is opened in for reading (a double-click in the tree).
+//! a file is opened in for reading (a double-click in the tree) and, with Edit, for editing.
 
 use crate::app::{App, Tab, file_name};
 use crate::files::{self, Content, Entry, Kind, Row};
@@ -11,6 +11,8 @@ use std::path::PathBuf;
 use std::sync::mpsc::Receiver;
 
 const ROW_H: f32 = 22.0;
+/// The column of line numbers of the editor.
+const EDIT_NUM_W: f32 = 54.0;
 
 /// What the panel knows: the files of one repository and which folders are open.
 #[derive(Default)]
@@ -61,9 +63,53 @@ enum Act {
     History(String),
 }
 
+/// What a file being edited asks before its changes are lost, and what follows the answer.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub enum Ask {
+    /// The tab is closed.
+    Close,
+    /// The program is closed.
+    Quit,
+}
+
+/// A file of the working folder being edited in its tab.
+pub struct EditTab {
+    pub e: files::Editing,
+    /// Asking about the changes not saved yet.
+    pub ask: Option<Ask>,
+    /// The file changed on disk after it was opened, while it has changes here: Save asks
+    /// whether to overwrite it.
+    pub outside: bool,
+    /// Why the last save failed.
+    pub note: Option<String>,
+    /// Put the text cursor into the editor on the next frame.
+    focus: bool,
+}
+
+/// The file being edited in a tab, if any, and whether it has changes not saved.
+pub fn unsaved(diffs: &[crate::app::DiffTab]) -> Option<usize> {
+    diffs.iter().position(|d| d.edit.as_ref().is_some_and(|e| e.e.modified()))
+}
+
+/// What the right-click menu of the editor asked for.
+enum Menu {
+    Open(Option<usize>),
+    History,
+    Lines(usize, usize),
+    Annotate(Option<usize>),
+}
+
+/// Select characters `a..b` of line `l` in the editor `id`.
+fn select_in(ctx: &egui::Context, id: egui::Id, text: &str, l: usize, a: usize, b: usize) {
+    let start: usize = text.split('\n').take(l).map(|x| x.chars().count() + 1).sum();
+    let mut st = egui::TextEdit::load_state(ctx, id).unwrap_or_default();
+    st.cursor.set_char_range(Some(egui::text::CCursorRange::two(egui::text::CCursor::new(start + a), egui::text::CCursor::new(start + b))));
+    st.store(ctx, id);
+}
+
 /// What the tab of a file open for reading says under its name (tabs are told apart by it).
 pub fn reading_subtitle(path: &str) -> String {
-    format!("{path}  ·  {}  ·  {}", tr("working folder"), tr("read only"))
+    format!("{path}  ·  {}", tr("working folder"))
 }
 
 /// The lines of a file as the diff tab takes them: every line unchanged, with its number. The
@@ -176,6 +222,11 @@ impl App {
         // The file it is, for Show History, Annotate with Git Blame and Open in Default Application.
         d.source = Some(crate::app::CompareSource::Worktree { path: t.path, old_path: None, tracked: true });
         self.tab = Tab::Diff(k);
+        if self.diffs[k].diff.images.is_none() {
+            if let Err(why) = self.start_editing(k) {
+                self.diffs[k].read_only = Some(why);
+            }
+        }
         true
     }
 
@@ -184,6 +235,10 @@ impl App {
     pub fn reload_reading_tabs(&mut self) {
         let Some(root) = self.repo.as_ref().map(|r| r.path.clone()) else { return };
         for d in self.diffs.iter_mut().filter(|d| d.reading && d.diff.images.is_none()) {
+            if d.edit.is_some() {
+                Self::reload_edited(&root, d);
+                continue;
+            }
             let Some(path) = d.source.as_ref().map(|s| s.path().to_string()) else { continue };
             // A file that is gone or is no text any more keeps what was read last.
             let Content::Text(lines) = files::read(&root, &Entry { path, kind: Kind::File }) else { continue };
@@ -197,6 +252,360 @@ impl App {
             if let Some(f) = d.find.as_mut() {
                 f.cache = None;
             }
+        }
+    }
+
+    /// A text file opened from the Files panel goes straight into the editor: read again as
+    /// it is on disk. A file that can't be written back unchanged (not UTF-8, mixed line ends,
+    /// too big) stays in the reading view, which says why.
+    pub fn start_editing(&mut self, i: usize) -> Result<(), String> {
+        let Some(root) = self.repo.as_ref().map(|r| r.path.clone()) else { return Err(String::new()) };
+        let Some(path) = self.diffs.get(i).and_then(|d| d.source.as_ref()).map(|s| s.path().to_string()) else { return Err(String::new()) };
+        let file = crate::chrome::repo_file(&root, &path);
+        let read = match std::fs::symlink_metadata(&file) {
+            Ok(m) if m.is_file() => std::fs::read(&file).map_err(|e| e.to_string()),
+            Ok(_) => Err(tr("The file is not an ordinary file").to_string()),
+            Err(e) => Err(e.to_string()),
+        };
+        let e = read.and_then(|bytes| files::Editing::from_bytes(bytes).map_err(|why| tr(why).to_string()))?;
+        let d = &mut self.diffs[i];
+        d.edit = Some(Box::new(EditTab { e, ask: None, outside: false, note: None, focus: true }));
+        d.read_only = None;
+        Ok(())
+    }
+
+    /// Write the edited text to the file. A file changed on disk since it was read is not
+    /// overwritten unless `force`: the tab asks first. Returns whether the file was written.
+    pub fn save_edit(&mut self, i: usize, force: bool) -> bool {
+        let Some(root) = self.repo.as_ref().map(|r| r.path.clone()) else { return false };
+        let Some(d) = self.diffs.get_mut(i) else { return false };
+        let Some(path) = d.source.as_ref().map(|s| s.path().to_string()) else { return false };
+        let Some(t) = d.edit.as_mut() else { return false };
+        let file = crate::chrome::repo_file(&root, &path);
+        if !force && std::fs::read(&file).ok().as_deref() != Some(&t.e.disk[..]) {
+            t.outside = true;
+            return false;
+        }
+        let bytes = t.e.bytes();
+        if let Err(err) = std::fs::write(&file, &bytes) {
+            t.note = Some(trf("The file could not be saved: {}", &[&err]));
+            return false;
+        }
+        t.e.saved = t.e.text.clone();
+        t.e.disk = bytes.clone();
+        t.outside = false;
+        t.note = None;
+        // What reading shows, and the changes of the Commit panel, follow.
+        d.diff = reading_diff(&files::lines_of(&bytes));
+        d.syntax = None;
+        d.text_sel = None;
+        d.blame = None;
+        self.refresh_soon();
+        true
+    }
+
+    /// The answer to Ask: the changes saved (or let go of), then what was asked for.
+    fn answer(&mut self, i: usize, save: bool, ctx: &egui::Context) {
+        let Some(ask) = self.diffs.get(i).and_then(|d| d.edit.as_ref()).and_then(|t| t.ask) else { return };
+        if save && !self.save_edit(i, false) {
+            // Not written (changed outside, or an error): the tab says so and keeps the text.
+            if let Some(t) = self.diffs[i].edit.as_mut() {
+                t.ask = None;
+            }
+            return;
+        }
+        self.diffs[i].edit = None;
+        match ask {
+            Ask::Close => self.close_diff(i),
+            Ask::Quit => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
+        }
+    }
+
+    /// The window is being closed with an edited file not saved: it stays open and the file's
+    /// tab asks what to do (one file at a time, in the repository in front first).
+    pub fn ask_before_quit(&mut self, ctx: &egui::Context) {
+        if !ctx.input(|i| i.viewport().close_requested()) {
+            return;
+        }
+        if unsaved(&self.diffs).is_none() {
+            let Some(root) = self.parked.iter().find(|w| unsaved(&w.diffs).is_some()).and_then(|w| w.repo.as_ref()).map(|r| r.path.clone()) else { return };
+            if !self.can_switch() {
+                // Its tab can't come to the front now: the window stays, and says why.
+                ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+                self.notify(crate::app::Toast { title: tr("Save the edited files first").into(), text: trf("A file edited in {} has changes that are not saved.", &[&root.display()]), ok: false, at: std::time::Instant::now() });
+                return;
+            }
+            self.open(&root);
+        }
+        let Some(i) = unsaved(&self.diffs) else { return };
+        ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+        if let Some(t) = self.diffs[i].edit.as_mut() {
+            t.ask = Some(Ask::Quit);
+        }
+        self.tab = Tab::Diff(i);
+    }
+
+    /// Whether a file edited in any repository tab has changes not saved.
+    pub fn unsaved_anywhere(&self) -> bool {
+        unsaved(&self.diffs).is_some() || self.parked.iter().any(|w| unsaved(&w.diffs).is_some())
+    }
+
+    /// The repository changed: a file being edited that changed on disk is read again when
+    /// it has no changes here, and otherwise only marked, so that Save asks before overwriting.
+    fn reload_edited(root: &std::path::Path, d: &mut crate::app::DiffTab) {
+        let (Some(t), Some(path)) = (d.edit.as_mut(), d.source.as_ref().map(|s| s.path().to_string())) else { return };
+        let Ok(bytes) = std::fs::read(crate::chrome::repo_file(root, &path)) else { return };
+        if bytes == t.e.disk {
+            return;
+        }
+        if t.e.modified() {
+            t.outside = true;
+        } else if let Ok(e) = files::Editing::from_bytes(bytes) {
+            d.diff = reading_diff(&files::lines_of(&e.disk));
+            t.e = e;
+        }
+    }
+
+    /// The tab of a file being edited: its toolbar, the questions, and the editor.
+    pub fn edit_tab(&mut self, ui: &mut Ui, i: usize) {
+        let ctx = ui.ctx().clone();
+        let syntax_on = !self.settings.syntax_off;
+        let mut act: Option<&str> = None;
+        let front = self.dialog.is_none() && !self.show_settings && self.merge_open.is_none();
+        let crate::app::DiffTab { source, edit, find, .. } = &mut self.diffs[i];
+        let path = source.as_ref().map(|s| s.path().to_string()).unwrap_or_default();
+        let Some(t) = edit.as_mut() else { return };
+        if front && ctx.input_mut(|k| k.consume_key(egui::Modifiers::COMMAND, egui::Key::S)) {
+            act = Some("save");
+        }
+        let modified = t.e.modified();
+        egui::Panel::top("edit_bar")
+            .exact_size(34.0)
+            .resizable(false)
+            .frame(egui::Frame::new().fill(theme::BG()).inner_margin(egui::Margin::symmetric(10, 4)))
+            .show(ui, |ui| {
+                ui.horizontal_centered(|ui| {
+                    ui.label(RichText::new(format!("{path}  ·  {}", tr("working folder"))).color(theme::TEXT_MID()));
+                    let n = t.e.text.lines().count();
+                    ui.label(RichText::new(format!("{n} {}", crate::i18n::plural(n, "line", "lines"))).color(theme::TEXT_DIM()).size(12.0));
+                    if modified {
+                        ui.label(RichText::new(tr("modified")).color(theme::LINK()).size(12.0));
+                    }
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if theme::icon_button_sized(ui, Icon::Search, &format!("{}  ({})", tr("Find in the file"), crate::keymap::shown("Ctrl+F")), 24.0, find.is_some(), true).clicked() {
+                            *find = if find.is_some() { None } else { Some(crate::find::Find::opened()) };
+                        }
+                        let save = format!("{}  ({})", tr("Save"), crate::keymap::shown("Ctrl+S"));
+                        if ui.add_enabled(modified, egui::Button::new(tr("Save"))).on_hover_text(save).clicked() {
+                            act = Some("save");
+                        }
+                    });
+                });
+            });
+        // A question or a warning under the toolbar.
+        let name = file_name(&path).to_string();
+        let bar = if let Some(ask) = t.ask {
+            let q = match ask {
+                Ask::Quit => trf("{} has changes that are not saved. Save them before closing the program?", &[&name]),
+                _ => trf("{} has changes that are not saved. Save them?", &[&name]),
+            };
+            Some((q, vec![("ask_save", tr("Save")), ("ask_drop", tr("Don't Save")), ("ask_cancel", tr("Cancel"))]))
+        } else if t.outside {
+            Some((trf("{} was changed on disk after it was opened here.", &[&name]), vec![("overwrite", tr("Overwrite It")), ("reload", tr("Load It and Lose the Changes Here")), ("keep", tr("Keep Editing"))]))
+        } else {
+            t.note.clone().map(|n| (n, vec![("note_ok", tr("OK"))]))
+        };
+        if let Some((text, buttons)) = bar {
+            egui::Panel::top("edit_ask")
+                .exact_size(36.0)
+                .resizable(false)
+                .frame(egui::Frame::new().fill(theme::rgb(0x3d, 0x35, 0x22)).inner_margin(egui::Margin::symmetric(10, 4)))
+                .show(ui, |ui| {
+                    ui.horizontal_centered(|ui| {
+                        ui.label(RichText::new(text).color(theme::TEXT()));
+                        ui.add_space(8.0);
+                        for (id, label) in buttons {
+                            if ui.button(label).clicked() {
+                                act = Some(id);
+                            }
+                        }
+                    });
+                });
+        }
+        let id = egui::Id::unique(("file_edit", i, &path));
+        let mut menu: Option<Menu> = None;
+        let mut focus = std::mem::take(&mut t.focus);
+        // The search (Ctrl+F): its hits are marked in the text, the current one brought into view.
+        let lh = crate::merge_view::LH;
+        let mut marks: Vec<crate::merge_view::Mark> = vec![];
+        let mut go: Option<(usize, usize, usize)> = None;
+        let mut find_close = false;
+        if let Some(f) = find.as_mut() {
+            let hits = crate::find::Matcher::new(&f.query, f.regex, f.case).map(|m| m.in_text(&t.e.text)).unwrap_or_default();
+            if f.current >= hits.len() {
+                f.current = 0;
+            }
+            if std::mem::take(&mut f.go) {
+                go = hits.get(f.current).copied();
+            }
+            marks = hits.iter().enumerate().map(|(k, &(l, a, b))| (l, a, b, k == f.current)).collect();
+            let count = (if hits.is_empty() { 0 } else { f.current + 1 }, hits.len());
+            egui::Panel::top("edit_find")
+                .exact_size(34.0)
+                .resizable(false)
+                .frame(egui::Frame::new().fill(theme::BG()).inner_margin(egui::Margin::symmetric(10, 4)))
+                .show(ui, |ui| {
+                    let r = ui.max_rect().expand2(vec2(10.0, 4.0));
+                    theme::hline(ui, r.top() + 0.5, r.left(), r.right());
+                    ui.horizontal_centered(|ui| find_close = crate::commit_view::find_line(ui, f, "Search in the file", count));
+                });
+            // Closed with Esc: the text cursor goes to the found text.
+            if find_close {
+                if let Some(&(l, a, b)) = hits.get(f.current) {
+                    select_in(&ctx, id, &t.e.text, l, a, b);
+                }
+                focus = true;
+            }
+        }
+        if find_close {
+            *find = None;
+        }
+        // Tab: spaces (or a tab) the way the file is indented; several lines selected move right.
+        if ctx.memory(|m| m.has_focus(id)) && ctx.input_mut(|k| k.consume_key(egui::Modifiers::NONE, egui::Key::Tab)) {
+            if let Some(range) = egui::TextEdit::load_state(&ctx, id).and_then(|st| st.cursor.char_range()) {
+                let unit = files::indent_unit(&path, &t.e.text);
+                let (text, a, b) = files::indent(&t.e.text, range.primary.index.0, range.secondary.index.0, unit);
+                t.e.text = text;
+                if let Some(mut st) = egui::TextEdit::load_state(&ctx, id) {
+                    st.cursor.set_char_range(Some(egui::text::CCursorRange::two(egui::text::CCursor::new(a), egui::text::CCursor::new(b))));
+                    st.store(&ctx, id);
+                }
+            }
+        }
+        egui::CentralPanel::default().frame(egui::Frame::new().fill(theme::BG())).show(ui, |ui| {
+            let r = ui.max_rect();
+            theme::hline(ui, r.top() + 0.5, r.left(), r.right());
+            let look_path = if syntax_on { path.as_str() } else { "" };
+            let mut sa = egui::ScrollArea::both().id_salt(("file_edit_scroll", i)).auto_shrink([false, false]);
+            if let Some((l, a, _)) = go {
+                sa = sa.vertical_scroll_offset((l as f32 * lh - 80.0).max(0.0));
+                let cw = ui.fonts_mut(|f| f.glyph_width(&FontId::monospace(13.0), '0'));
+                let x = a as f32 * cw;
+                let seen = r.width() - EDIT_NUM_W - 40.0;
+                sa = sa.horizontal_scroll_offset(if x > seen { x - seen / 2.0 } else { 0.0 });
+            }
+            sa.show(ui, |ui| {
+                let n = t.e.text.split('\n').count();
+                let avail = ui.available_size();
+                ui.horizontal_top(|ui| {
+                    ui.spacing_mut().item_spacing.x = 0.0;
+                    let (nums, _) = ui.allocate_exact_size(vec2(EDIT_NUM_W, (n as f32 * lh).max(avail.y)), Sense::hover());
+                    let clip = nums.intersect(ui.clip_rect());
+                    let p = ui.painter().with_clip_rect(clip);
+                    let first = ((clip.top() - nums.top()) / lh).floor().max(0.0) as usize;
+                    let last = (((clip.bottom() - nums.top()) / lh).ceil() as usize + 1).min(n);
+                    for k in first..last {
+                        p.text(pos2(nums.right() - 12.0, nums.top() + k as f32 * lh + lh / 2.0), egui::Align2::RIGHT_CENTER, (k + 1).to_string(), FontId::monospace(11.5), theme::TEXT_DIM());
+                    }
+                    let mut layouter = |ui: &Ui, buf: &dyn egui::TextBuffer, _w: f32| {
+                        let look = crate::merge_view::Look { path: look_path, st: Default::default(), marks: &marks };
+                        let job = crate::merge_view::cached_job(ui.ctx(), buf.as_str(), theme::TEXT(), look);
+                        ui.fonts_mut(|f| f.layout_job(job))
+                    };
+                    let w = (avail.x - EDIT_NUM_W).max(100.0);
+                    let r = ui.add(
+                        egui::TextEdit::multiline(&mut t.e.text)
+                            .id(id)
+                            .frame(egui::Frame::NONE)
+                            .margin(egui::Margin::ZERO)
+                            .lock_focus(true)
+                            .desired_rows(1)
+                            .desired_width(w)
+                            .min_size(vec2(w, avail.y))
+                            .layouter(&mut layouter),
+                    );
+                    let cursor = egui::TextEdit::load_state(ui.ctx(), id).and_then(|st| st.cursor.char_range());
+                    r.context_menu(|ui| {
+                        theme::edit_menu_items(ui, &r);
+                        ui.separator();
+                        // The lines of the cursor or of the selection (1-based).
+                        let line_of = |c: usize| t.e.text.chars().take(c).filter(|&ch| ch == '\n').count() + 1;
+                        let lines = cursor.map(|c| {
+                            let (a, b) = (c.primary.index.0.min(c.secondary.index.0), c.primary.index.0.max(c.secondary.index.0));
+                            (line_of(a), line_of(b))
+                        });
+                        let at = lines.map(|l| l.0);
+                        let label = match at {
+                            Some(l) => trf("Open in Editor at Line {}", &[&l]),
+                            None => tr("Open in Default Application").to_string(),
+                        };
+                        if ui.button(label).on_hover_text(tr("Opens the file with your default application, at this line when it is an editor RefBraid knows (VS Code, JetBrains IDEs, Sublime Text, gedit, Kate…). Settings → Tools → Open Files sets another program.")).clicked() {
+                            menu = Some(Menu::Open(at));
+                            ui.close();
+                        }
+                        if ui.button(tr("Show History")).on_hover_text(tr("The commits that changed this file, followed through its renames")).clicked() {
+                            menu = Some(Menu::History);
+                            ui.close();
+                        }
+                        let sel = lines.filter(|(a, b)| a != b || cursor.is_some_and(|c| !c.is_empty()));
+                        if ui.add_enabled(sel.is_some(), egui::Button::new(tr("Show History for Selection"))).on_hover_text(tr("The commits that changed the selected lines (git log -L)")).clicked() {
+                            menu = sel.map(|(a, b)| Menu::Lines(a, b));
+                            ui.close();
+                        }
+                        if ui.button(tr("Annotate with Git Blame")).on_hover_text(tr("The date and author of the commit that last changed each line, in a tab of its own")).clicked() {
+                            menu = Some(Menu::Annotate(at));
+                            ui.close();
+                        }
+                    });
+                });
+            });
+        });
+        if focus {
+            ctx.memory_mut(|m| m.request_focus(id));
+        }
+        if let Some(m) = menu {
+            let root = self.repo.as_ref().map(|r| r.path.clone());
+            match m {
+                Menu::Open(line) => {
+                    if let Some(root) = root {
+                        self.open_file_at(&crate::chrome::repo_file(&root, &path), line);
+                    }
+                }
+                Menu::History => self.open_file_history(&path, None),
+                Menu::Lines(a, b) => self.open_lines_history(&path, None, a, b),
+                Menu::Annotate(line) => self.open_blame(&path, None, line),
+            }
+            return;
+        }
+        match act {
+            Some("save") => {
+                self.save_edit(i, false);
+            }
+            Some("ask_save") => self.answer(i, true, &ctx),
+            Some("ask_drop") => self.answer(i, false, &ctx),
+            Some("ask_cancel") => self.diffs[i].edit.as_mut().unwrap().ask = None,
+            Some("overwrite") => {
+                self.save_edit(i, true);
+            }
+            Some("reload") => {
+                let mut ok = false;
+                if let (Some(root), Some(path)) = (self.repo.as_ref().map(|r| r.path.clone()), self.diffs[i].source.as_ref().map(|s| s.path().to_string())) {
+                    if let Some(e) = std::fs::read(crate::chrome::repo_file(&root, &path)).ok().and_then(|b| files::Editing::from_bytes(b).ok()) {
+                        let t = self.diffs[i].edit.as_mut().unwrap();
+                        t.e = e;
+                        t.outside = false;
+                        ok = true;
+                    }
+                }
+                if !ok {
+                    // Gone, or no longer editable: back to reading what there is.
+                    self.diffs[i].edit = None;
+                    self.reload_reading_tabs();
+                }
+            }
+            Some("keep") => self.diffs[i].edit.as_mut().unwrap().outside = false,
+            Some("note_ok") => self.diffs[i].edit.as_mut().unwrap().note = None,
+            _ => {}
         }
     }
 
@@ -668,6 +1077,8 @@ mod tests {
         assert!(app.file_tabs.is_empty());
         let d = &app.diffs[0];
         assert_eq!((app.tab, d.reading, d.side_by_side, d.tab_title().as_str()), (Tab::Diff(0), true, false, "main.rs"));
+        // A UTF-8 text opens straight in the editor.
+        assert_eq!(d.edit.as_ref().map(|t| t.e.text.as_str()), Some("fn main() {}\n"));
         assert_eq!(d.diff.unified, vec![(' ', "fn main() {}".to_string())]);
         assert_eq!(d.diff.rows[0].right, Some((1, "fn main() {}".to_string())));
         // Opened again: the same tab, not a second one.
@@ -686,5 +1097,56 @@ mod tests {
         app.file_tabs[i].content = Some(files::read(&r.dir, &Entry { path: "data.bin".into(), kind: Kind::File }));
         assert!(!app.promote_file_tab(i));
         assert_eq!(app.file_tabs.len(), 1);
+    }
+    #[test]
+    fn a_file_open_for_reading_is_edited_and_saved() {
+        let r = TestRepo::new("files-edit");
+        r.write("app.yml", "name: one\r\nport: 1\r\n");
+        r.commit("Add the config");
+        let mut app = r.app();
+        app.show_files = true;
+        app.files_tick();
+        app.open_file_tab("app.yml");
+        app.file_tabs[0].content = Some(files::read(&r.dir, &Entry { path: "app.yml".into(), kind: Kind::File }));
+        assert!(app.promote_file_tab(0));
+        let t = app.diffs[0].edit.as_mut().expect("editing");
+        assert_eq!(t.e.text, "name: one\nport: 1\n");
+        t.e.text = "name: two\nport: 1\n".into();
+        assert_eq!(app.diffs[0].tab_title(), "app.yml *");
+        // Closing the tab with changes not saved asks first, and keeps it.
+        app.close_diff(0);
+        assert_eq!((app.diffs.len(), app.diffs[0].edit.as_ref().unwrap().ask), (1, Some(Ask::Close)));
+        app.diffs[0].edit.as_mut().unwrap().ask = None;
+        // Saved with the line ends the file had; the change shows in git.
+        assert!(app.save_edit(0, false));
+        assert_eq!(r.read("app.yml"), "name: two\r\nport: 1\r\n");
+        assert_eq!(r.status(), vec![" M app.yml".to_string()]);
+        assert_eq!((app.diffs[0].tab_title().as_str(), app.diffs[0].diff.unified[0].1.as_str()), ("app.yml", "name: two"));
+        // Changed on disk meanwhile: not overwritten unless asked to.
+        app.diffs[0].edit.as_mut().unwrap().e.text = "name: three\nport: 1\n".into();
+        r.write("app.yml", "name: other\r\n");
+        assert!(!app.save_edit(0, false));
+        assert!(app.diffs[0].edit.as_ref().unwrap().outside);
+        assert_eq!(r.read("app.yml"), "name: other\r\n");
+        assert!(app.save_edit(0, true));
+        assert_eq!(r.read("app.yml"), "name: three\r\nport: 1\r\n");
+        // No changes here: a change on disk is simply taken in after a refresh.
+        r.write("app.yml", "name: four\r\n");
+        app.refresh();
+        assert_eq!(app.diffs[0].edit.as_ref().unwrap().e.text, "name: four\n");
+        // A file in another encoding is only read.
+        r.write("latin.txt", "caf\u{e9}");
+        std::fs::write(r.dir.join("latin.txt"), b"caf\xe9\n").unwrap();
+        r.commit("Add a Latin-1 file");
+        app.open_file_tab("latin.txt");
+        let k = app.file_tabs.len() - 1;
+        app.file_tabs[k].content = Some(files::read(&r.dir, &Entry { path: "latin.txt".into(), kind: Kind::File }));
+        assert!(app.promote_file_tab(k));
+        let j = app.diffs.len() - 1;
+        assert!(app.diffs[j].edit.is_none());
+        assert!(app.diffs[j].read_only.as_deref().is_some_and(|w| w.contains("UTF-8")));
+        // With no changes the tab closes at once.
+        app.close_diff(0);
+        assert_eq!(app.diffs.len(), 1);
     }
 }

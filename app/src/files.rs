@@ -208,8 +208,147 @@ pub fn size_text(bytes: u64) -> String {
     }
 }
 
+/// What Tab puts in a file being edited: a tab where the file needs or keeps them (a Makefile,
+/// Go, lines that already start with tabs), otherwise spaces — two in YAML and wherever the
+/// file is indented by two, four elsewhere.
+pub fn indent_unit(path: &str, text: &str) -> &'static str {
+    let name = path.rsplit('/').next().unwrap_or(path).to_ascii_lowercase();
+    if name == "makefile" || name == "gnumakefile" || name.ends_with(".mk") || name.ends_with(".go") {
+        return "\t";
+    }
+    let tabs = text.lines().filter(|l| l.starts_with('\t')).count();
+    let spaces: Vec<usize> = text.lines().filter(|l| l.starts_with(' ') && !l.trim().is_empty()).map(|l| l.len() - l.trim_start_matches(' ').len()).collect();
+    if tabs > spaces.len() {
+        return "\t";
+    }
+    if name.ends_with(".yml") || name.ends_with(".yaml") || spaces.iter().any(|&n| n % 4 != 0) {
+        "  "
+    } else {
+        "    "
+    }
+}
+
+/// Tab in the editor: `unit` in place of the selection `from..to` (characters), or, when the
+/// selection spans lines, `unit` before each of those lines. The new text and selection.
+pub fn indent(text: &str, from: usize, to: usize, unit: &str) -> (String, usize, usize) {
+    let (from, to) = (from.min(to), from.max(to));
+    let byte = |c: usize| text.char_indices().nth(c).map_or(text.len(), |(b, _)| b);
+    let (a, b) = (byte(from), byte(to));
+    let n = unit.chars().count();
+    if !text[a..b].contains('\n') {
+        let out = format!("{}{unit}{}", &text[..a], &text[b..]);
+        return (out, from + n, from + n);
+    }
+    let start = text[..a].rfind('\n').map_or(0, |k| k + 1);
+    let mut out = text[..start].to_string();
+    let mut lines = 0;
+    for (k, line) in text[start..b].split('\n').enumerate() {
+        if k > 0 {
+            out.push('\n');
+        }
+        // A selection that ends at the start of a line leaves that line as it is.
+        if !(line.is_empty() && k > 0) {
+            out.push_str(unit);
+            lines += 1;
+        }
+        out.push_str(line);
+    }
+    out.push_str(&text[b..]);
+    (out, from + n, to + n * lines)
+}
+
+/// The biggest file that is edited in the program: the whole text is laid out again on every
+/// key, which stays quick up to about this size.
+pub const MAX_EDIT_BYTES: usize = 1024 * 1024;
+
+/// A file of the working folder being edited: its text with "\n" line ends, and what is needed
+/// to write it back the way it was stored (line ends, the byte-order mark).
+#[derive(Clone, Debug, PartialEq)]
+pub struct Editing {
+    pub text: String,
+    /// The text as it was read or last saved: whether there is anything to save.
+    pub saved: String,
+    /// The bytes of the file when it was read or last saved: whether someone else changed it.
+    pub disk: Vec<u8>,
+    pub crlf: bool,
+    pub bom: bool,
+}
+
+impl Editing {
+    /// The file can be edited when it is UTF-8 text of one kind of line ends. Otherwise the
+    /// reason why not, to show instead.
+    pub fn from_bytes(bytes: Vec<u8>) -> Result<Editing, &'static str> {
+        if bytes.len() > MAX_EDIT_BYTES {
+            return Err("The file is too big to edit here (over 1 MB)");
+        }
+        if !is_text(&bytes) {
+            return Err("The file is not text");
+        }
+        let Ok(text) = std::str::from_utf8(&bytes) else {
+            return Err("The file is not in UTF-8: it can only be read here, so that saving does not change its encoding");
+        };
+        let bom = text.starts_with('\u{feff}');
+        let text = text.strip_prefix('\u{feff}').unwrap_or(text);
+        let lf = text.matches('\n').count();
+        let crlf_n = text.matches("\r\n").count();
+        if crlf_n > 0 && crlf_n < lf {
+            return Err("The file mixes Windows and Unix line ends: it can only be read here, so that saving does not change them");
+        }
+        let crlf = crlf_n > 0;
+        let text = if crlf { text.replace("\r\n", "\n") } else { text.to_string() };
+        Ok(Editing { saved: text.clone(), text, disk: bytes, crlf, bom })
+    }
+
+    pub fn modified(&self) -> bool {
+        self.text != self.saved
+    }
+
+    /// The bytes to write: the text with the line ends and the mark the file had.
+    pub fn bytes(&self) -> Vec<u8> {
+        let mut out = if self.bom { "\u{feff}".as_bytes().to_vec() } else { vec![] };
+        if self.crlf {
+            out.extend_from_slice(self.text.replace('\n', "\r\n").as_bytes());
+        } else {
+            out.extend_from_slice(self.text.as_bytes());
+        }
+        out
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn tab_indents_the_way_the_file_does() {
+        assert_eq!(indent_unit("docker-compose.yml", "a:\n  b: 1\n"), "  ");
+        assert_eq!(indent_unit("Makefile", ""), "\t");
+        assert_eq!(indent_unit("app.py", "def f():\n    pass\n"), "    ");
+        assert_eq!(indent_unit("app.js", "if (a) {\n  b();\n}\n"), "  ");
+        assert_eq!(indent_unit("main.c", "int f() {\n\treturn 0;\n}\n"), "\t");
+        // No selection: the unit at the cursor.
+        assert_eq!(indent("ab", 1, 1, "  "), ("a  b".to_string(), 3, 3));
+        // Several lines selected: each of them moves right.
+        assert_eq!(indent("x: 1\ny: 2\nz: 3", 2, 7, "  "), ("  x: 1\n  y: 2\nz: 3".to_string(), 4, 11));
+        assert_eq!(indent("a\nb\n", 0, 4, "\t"), ("\ta\n\tb\n".to_string(), 1, 6));
+    }
+
+    #[test]
+    fn an_edited_file_is_written_back_with_its_line_ends_and_mark() {
+        let e = Editing::from_bytes(b"a: 1\nb: 2\n".to_vec()).unwrap();
+        assert_eq!((e.text.as_str(), e.crlf, e.bom, e.modified()), ("a: 1\nb: 2\n", false, false, false));
+        assert_eq!(e.bytes(), b"a: 1\nb: 2\n");
+        let mut w = Editing::from_bytes("\u{feff}one\r\ntwo".as_bytes().to_vec()).unwrap();
+        assert_eq!((w.text.as_str(), w.crlf, w.bom), ("one\ntwo", true, true));
+        w.text.push_str("\nthree\n");
+        assert!(w.modified());
+        assert_eq!(w.bytes(), "\u{feff}one\r\ntwo\r\nthree\r\n".as_bytes());
+        // What can't be written back unchanged is only read.
+        assert!(Editing::from_bytes(b"one\r\ntwo\nthree".to_vec()).is_err());
+        assert!(Editing::from_bytes(b"caf\xe9\n".to_vec()).is_err());
+        assert!(Editing::from_bytes(b"\x00\x01\x02".to_vec()).is_err());
+        assert!(Editing::from_bytes(vec![b'a'; MAX_EDIT_BYTES + 1]).is_err());
+        assert!(Editing::from_bytes(vec![]).is_ok());
+    }
+
     use super::*;
     use crate::testrepo::TestRepo;
 

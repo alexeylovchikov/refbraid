@@ -164,8 +164,13 @@ impl App {
                 if !self.diffs.is_empty() {
                     ui.separator();
                     if ui.button(tr("Close All Diffs")).clicked() {
-                        self.diffs.clear();
+                        // Files edited and not saved stay, and the first one asks.
+                        self.diffs.retain(|d| d.edit.as_ref().is_some_and(|e| e.e.modified()));
                         self.tab = Tab::Log;
+                        if let Some(e) = self.diffs.first_mut().and_then(|d| d.edit.as_mut()) {
+                            e.ask = Some(crate::files_view::Ask::Close);
+                            self.tab = Tab::Diff(0);
+                        }
                     }
                 }
             });
@@ -340,6 +345,8 @@ impl App {
                 blame: None,
                 syntax: None,
                 reading: false,
+                edit: None,
+                read_only: None,
                 // The search stays open from one commit to the next.
                 find: prev.as_ref().and_then(|p| p.find.clone()).map(|mut f| {
                     f.cache = None;

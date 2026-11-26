@@ -602,12 +602,18 @@ pub struct DiffTab {
     /// are shown with their numbers, and the text is selected, searched and walked with the
     /// keyboard as in a diff.
     pub reading: bool,
+    /// Such a file being edited (Edit in its toolbar): the editor takes the place of the text.
+    pub edit: Option<Box<crate::files_view::EditTab>>,
+    /// Such a file that can't be edited here, and why.
+    pub read_only: Option<String>,
 }
 
 impl DiffTab {
     /// "Diff: name", or "<Diff: name>" for the quick-view tab.
     pub fn tab_title(&self) -> String {
-        if self.reading {
+        if self.edit.as_ref().is_some_and(|e| e.e.modified()) {
+            format!("{} *", self.title)
+        } else if self.reading {
             self.title.clone()
         } else if self.preview {
             format!("<Diff: {}>", self.title)
@@ -1541,8 +1547,16 @@ impl App {
                     app.show_files = true;
                     app.files_tick();
                     app.files.open_for_demo("src");
-                    if view.contains("srcpage") {
+                    if view.contains("srcpage") || view.contains("srcwrite") {
                         app.open_file_tab("src/app.py");
+                    }
+                    if view.contains("srcwrite") {
+                        // The file in the editor, with a change not saved yet.
+                        if let Some(i) = app.diffs.iter().position(|d| d.reading) {
+                            if let Some(t) = app.diffs[i].edit.as_mut() {
+                                t.e.text.insert_str(0, "# edited here\n");
+                            }
+                        }
                     }
                 }
                 if view.contains("newversion") {
@@ -1872,7 +1886,8 @@ impl App {
         }
         crate::details_view::set_issue_rules(&self.settings.issue_rules(&key));
         self.repo = Some(repo);
-        self.diffs.clear();
+        // The same repository opened again: files edited and not saved stay open.
+        self.diffs.retain(|d| d.edit.as_ref().is_some_and(|e| e.e.modified()));
         self.merges.clear();
         self.blames.clear();
         self.reflog = None;
@@ -1941,6 +1956,12 @@ impl App {
             self.open(&root);
             return;
         }
+        // A quick-view repository with an edited file not saved is kept as an ordinary tab.
+        let front_unsaved = crate::files_view::unsaved(&self.diffs).is_some();
+        let old_unsaved = self.preview_repo.as_ref().is_some_and(|q| (self.repo.as_ref().is_some_and(|r| r.path == *q) && front_unsaved) || self.parked.iter().any(|w| w.repo.as_ref().is_some_and(|r| r.path == *q) && crate::files_view::unsaved(&w.diffs).is_some()));
+        if old_unsaved {
+            self.preview_repo = None;
+        }
         let old = self.preview_repo.clone();
         self.open(&root);
         if self.repo.as_ref().is_none_or(|r| r.path != root) {
@@ -1993,6 +2014,23 @@ impl App {
     pub fn close_repo_tab(&mut self, root: &Path) {
         let Some(at) = self.tab_order.iter().position(|p| p == root) else { return };
         let front = self.repo.as_ref().is_some_and(|r| r.path == root);
+        // A file edited in it and not saved: it comes to the front and asks first.
+        let parked_unsaved = self.parked.iter().any(|w| w.repo.as_ref().is_some_and(|r| r.path == root) && crate::files_view::unsaved(&w.diffs).is_some());
+        if (front && crate::files_view::unsaved(&self.diffs).is_some()) || parked_unsaved {
+            if !front {
+                if !self.can_switch() {
+                    return;
+                }
+                self.open(root);
+            }
+            if let Some(i) = crate::files_view::unsaved(&self.diffs) {
+                if let Some(e) = self.diffs[i].edit.as_mut() {
+                    e.ask = Some(crate::files_view::Ask::Close);
+                }
+                self.tab = Tab::Diff(i);
+            }
+            return;
+        }
         if front && !self.can_switch() {
             self.notify(Toast { title: tr("Wait for the running operation").into(), text: tr("The repository can be closed when it is done.").into(), ok: false, at: Instant::now() });
             return;
@@ -3459,6 +3497,8 @@ impl App {
             find: None,
             syntax: None,
             reading: false,
+            edit: None,
+            read_only: None,
             blame: None,
         });
         self.tab = Tab::Diff(self.diffs.len() - 1);
@@ -3543,6 +3583,12 @@ impl App {
     }
 
     pub fn close_diff(&mut self, i: usize) {
+        // A file with changes not saved: the tab asks first (Save, Don't Save, Cancel).
+        if let Some(e) = self.diffs.get_mut(i).and_then(|d| d.edit.as_mut()).filter(|e| e.e.modified()) {
+            e.ask = Some(crate::files_view::Ask::Close);
+            self.tab = Tab::Diff(i);
+            return;
+        }
         if i < self.diffs.len() {
             self.diffs.remove(i);
         }
@@ -3831,6 +3877,7 @@ impl App {
             Self::take_pending_status(repo);
         }
         self.handle_keys(&ctx);
+        self.ask_before_quit(&ctx);
         self.take_dropped_patch(&ctx);
         if self.screenshot.is_none() && !self.settings.no_auto_refresh {
             self.watch(&ctx);

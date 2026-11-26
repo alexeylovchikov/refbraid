@@ -68,6 +68,7 @@ pub const FIXED: &[(&str, &str)] = &[
     ("Shift + those keys", "Select text in a diff from the cursor; Ctrl+C copies it"),
     ("Ctrl+← Ctrl+→ Ctrl+Home Ctrl+End", "In a diff: by words, and to the start or the end of the text"),
     ("F3 / Shift+F3", "Next and previous match of a search in a diff"),
+    ("Ctrl+S", "Save a file edited in its tab"),
     ("Esc", "Close a window or a search line"),
 ];
 
