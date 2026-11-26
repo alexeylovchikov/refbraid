@@ -1,6 +1,15 @@
 # Changelog
 
-<!-- last-commit: d4a7eb9e974af0a9edaa7cb9dd94d27a7b352f88 -->
+<!-- last-commit: 04c1161d37308388d9323f32af5575354cf4d1fc -->
+
+## 0.6.1 — 2026-11-26
+
+### New
+- **Editing files**: a double click in the **Files** panel opens a file straight in an editor, with line numbers, syntax colours and search (`Ctrl+F`, `F3`). **Save** or `Ctrl+S` saves it, and the change shows in the **Commit** panel at once. The line ends (Windows or Unix) and the byte-order mark stay as they were.
+- `Tab` indents the way the file does: two spaces in YAML, a tab in a Makefile, spaces elsewhere; with several lines selected each of them moves.
+- The right-click menu of the editor has **Open in Editor at Line …**, **Show History**, **Show History for Selection** and **Annotate with Git Blame**.
+- Closing the tab, the repository tab or the program with changes not saved asks whether to save them. A file changed on disk after it was opened is not overwritten without asking.
+- Files not in UTF-8, with mixed line ends or over 1 MB open read only, marked **read only** with the reason in its tooltip, so that saving can't spoil their encoding.
 
 ## 0.6.0 — 2026-11-25
 
