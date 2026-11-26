@@ -1,6 +1,14 @@
 # Changelog
 
-<!-- last-commit: 04c1161d37308388d9323f32af5575354cf4d1fc -->
+<!-- last-commit: 03ca94d88a873f7d7a5e2f55015c3517c3a5ce41 -->
+
+## 0.6.2 — 2026-11-26
+
+### New
+- **Installing an update from the program** on RHEL and the like: in Help → **Check for Updates…** the **Install …** button downloads the RPM, checks it against the release's `SHA256SUMS.txt` and installs it with dnf. The system's own window asks for the password; the program never sees it. Afterwards **Restart RefBraid** starts the new version. The file can still be downloaded in the browser with **Download in the Browser**.
+
+### Fixed
+- Windows (such as **Check for Updates**) can no longer be made narrower than the row of buttons at their bottom, so the buttons no longer stick out.
 
 ## 0.6.1 — 2026-11-26
 
