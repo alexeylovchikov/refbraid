@@ -41,7 +41,10 @@ pub fn show_titled(ctx: &egui::Context, id: &str, title: &str, shown: &str, widt
     let wkey = format!("{id}\u{1}{title}");
     let delta = delta(ctx, &wkey);
     let base = width;
-    let width = (width + delta.x).max(width * 0.7).min(ctx.content_rect().width() - 16.0).max(240.0);
+    // Never narrower than the buttons of its footer need (measured on the last frame).
+    let foot_key = key(&wkey, "footer");
+    let need: f32 = ctx.data(|d| d.get_temp(foot_key)).unwrap_or(0.0);
+    let width = (width + delta.x).max(width * 0.7).max(need).min(ctx.content_rect().width() - 16.0).max(240.0);
     let extra = delta.y.max(0.0);
     let natural_key = key(&wkey, "natural");
     let m = egui::Modal::new(egui::Id::unique(id))
@@ -98,8 +101,14 @@ pub fn show_titled(ctx: &egui::Context, id: &str, title: &str, shown: &str, widt
             );
             fu.spacing_mut().item_spacing = vec2(8.0, spacing.y);
             add(&mut fu, Part::Footer);
+            // What the buttons take, with the footer's margins: the window keeps at least that.
+            let used = fu.min_rect().width() + 32.0;
+            if (used - need).abs() > 0.5 {
+                ui.ctx().data_mut(|d| d.insert_temp(foot_key, used));
+                ui.ctx().request_repaint();
+            }
             let whole = ui.min_rect();
-            resize_grip(ui, whole, &wkey, vec2(-0.3 * base, 0.0));
+            resize_grip(ui, whole, &wkey, vec2((-0.3 * base).max(used - base), 0.0));
         });
     keep_on_screen(ctx, &wkey, m.response.rect);
     close || m.should_close()
